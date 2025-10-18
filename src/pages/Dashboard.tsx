@@ -7,7 +7,7 @@ import { useBalanceStore } from '../store/useBalanceStore';
 const DashboardPage = () => {
   const user = useUserStore(state => state.user);
   const orders = useOrdersStore(state => state.orders);
-  const spendSummary = useBalanceStore(state => state.getSummaryByType);
+  const getSummaryByType = useBalanceStore(state => state.getSummaryByType);
   const history = useBalanceStore(state => state.history);
 
   if (!user) {
@@ -19,7 +19,7 @@ const DashboardPage = () => {
   const activeOrders = myOrders.filter(order => order.status !== 'completed');
 
   const spentOnOrders = myOrders.reduce((total, order) => total + order.totalBudget, 0);
-  const earnedFromTasks = spendSummary('earn');
+  const earnedFromTasks = user ? getSummaryByType(user.id, 'earn') : 0;
   const referralIncome = user.referralEarnings;
   const totalTopUps = user.totalTopUps;
   const totalTopUpAmount = user.totalTopUpAmount;

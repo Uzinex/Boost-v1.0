@@ -8,12 +8,12 @@ import { useUserStore } from './useUserStore';
 import { useBalanceStore } from './useBalanceStore';
 
 interface TasksStore {
-  completed: Record<string, string>;
+  completedByUser: Record<string, Record<string, string>>;
   completeTask: (orderId: string) => void;
   hasCompleted: (orderId: string) => boolean;
 }
 
-type TasksState = { completed: Record<string, string> };
+type TasksState = { completedByUser: Record<string, Record<string, string>> };
 
 const storage = createJSONStorage<TasksState>(() => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -29,7 +29,7 @@ const storage = createJSONStorage<TasksState>(() => {
 export const useTasksStore = create<TasksStore>()(
   persist(
     (set, get) => ({
-      completed: {},
+      completedByUser: {},
       completeTask: orderId => {
         const { orders, incrementCompletion } = useOrdersStore.getState();
         const order = orders.find(item => item.id === orderId);
@@ -42,11 +42,17 @@ export const useTasksStore = create<TasksStore>()(
           throw new Error('Вы не можете выполнять собственные задания');
         }
 
+        if (!currentUser) {
+          throw new Error('Не удалось определить пользователя');
+        }
+
         if (order.status === 'completed') {
           throw new Error('Задание уже завершено');
         }
 
-        if (get().completed[orderId]) {
+        const completedForUser = get().completedByUser[currentUser.id] ?? {};
+
+        if (completedForUser[orderId]) {
           throw new Error('Вы уже выполнили это задание');
         }
 
@@ -56,13 +62,16 @@ export const useTasksStore = create<TasksStore>()(
         incrementCompletion(orderId);
 
         set(state => ({
-          completed: {
-            ...state.completed,
-            [orderId]: new Date().toISOString()
+          completedByUser: {
+            ...state.completedByUser,
+            [currentUser.id]: {
+              ...completedForUser,
+              [orderId]: new Date().toISOString()
+            }
           }
         }));
 
-        useBalanceStore.getState().logEvent({
+        useBalanceStore.getState().logEvent(currentUser.id, {
           type: 'earn',
           amount: reward,
           description: `Выполнено задание (${order.type === 'channel' ? 'канал' : 'группа'})`
@@ -80,12 +89,19 @@ export const useTasksStore = create<TasksStore>()(
             description
           });
       },
-      hasCompleted: orderId => Boolean(get().completed[orderId])
+      hasCompleted: orderId => {
+        const currentUser = useUserStore.getState().user;
+        if (!currentUser) {
+          return false;
+        }
+
+        return Boolean(get().completedByUser[currentUser.id]?.[orderId]);
+      }
     }),
     {
       name: 'boost-tasks-store',
       storage,
-      partialize: state => ({ completed: state.completed })
+      partialize: state => ({ completedByUser: state.completedByUser })
     }
   )
 );

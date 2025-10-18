@@ -1,7 +1,9 @@
 import { Card } from '../components/ui/Card';
+import { Button } from '../components/ui/Button';
 import { useUserStore } from '../store/useUserStore';
 import { formatNumber, formatUZT } from '../utils/formatters';
 import { TOPUP_TIERS } from '../utils/constants';
+import { openTelegramLink } from '../utils/telegram';
 
 const ProfilePage = () => {
   const user = useUserStore(state => state.user);
@@ -53,15 +55,13 @@ const ProfilePage = () => {
           Для пополнения напишите администратору <strong>@feruzdilov</strong>. Укажите желаемую сумму и ваш логин, а также
           предоставьте боту права администратора в продвигаемом канале или группе для корректного учёта подписок.
         </p>
-        <a
-          className="button"
+        <Button
+          type="button"
           style={{ marginTop: '16px', alignSelf: 'flex-start', display: 'inline-flex' }}
-          href="https://t.me/feruzdilov"
-          target="_blank"
-          rel="noreferrer"
+          onClick={() => openTelegramLink('https://t.me/feruzdilov')}
         >
           Написать администратору
-        </a>
+        </Button>
       </Card>
 
       <Card title="Тарифы на пополнение">

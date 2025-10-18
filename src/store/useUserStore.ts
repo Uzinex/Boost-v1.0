@@ -89,18 +89,37 @@ export const useUserStore = create<UserStore>()(
           : {};
 
         if (existing) {
-          set({
-            user: {
-              ...existing,
-              ...telegramData
-            },
-            isInitialized: true,
-            needsProfileSetup: false
-          });
-          return;
+          const isDifferentTelegramUser = Boolean(
+            telegramUser && existing.telegramId && existing.telegramId !== telegramUser.id
+          );
+
+          const hasSwitchedFromManualProfile = Boolean(telegramUser && !existing.telegramId);
+
+          if (!isDifferentTelegramUser && !hasSwitchedFromManualProfile) {
+            useBalanceStore.getState().setActiveUser(existing.id);
+            set({
+              user: {
+                ...existing,
+                ...telegramData
+              },
+              isInitialized: true,
+              needsProfileSetup: false
+            });
+            return;
+          }
         }
 
         if (!telegramUser) {
+          useBalanceStore.getState().setActiveUser(existing?.id ?? null);
+          if (existing) {
+            set({
+              user: existing,
+              isInitialized: true,
+              needsProfileSetup: false
+            });
+            return;
+          }
+
           set({ user: null, isInitialized: true, needsProfileSetup: true });
           return;
         }
@@ -131,13 +150,14 @@ export const useUserStore = create<UserStore>()(
           referrer: undefined
         };
 
+        useBalanceStore.getState().setActiveUser(newUser.id);
         set({
           user: newUser,
           isInitialized: true,
           needsProfileSetup: false
         });
 
-        useBalanceStore.getState().logEvent({
+        useBalanceStore.getState().logEvent(newUser.id, {
           type: 'topup',
           amount: INITIAL_BALANCE,
           description: 'Начислен стартовый баланс'
@@ -179,9 +199,10 @@ export const useUserStore = create<UserStore>()(
           referrer: undefined
         };
 
+        useBalanceStore.getState().setActiveUser(newUser.id);
         set({ user: newUser, isInitialized: true, needsProfileSetup: false });
 
-        useBalanceStore.getState().logEvent({
+        useBalanceStore.getState().logEvent(newUser.id, {
           type: 'topup',
           amount: INITIAL_BALANCE,
           description: 'Начислен стартовый баланс'
@@ -236,7 +257,7 @@ export const useUserStore = create<UserStore>()(
       recordTopUp: amount =>
         set(state => {
           if (!state.user) return state;
-          useBalanceStore.getState().logEvent({
+          useBalanceStore.getState().logEvent(state.user.id, {
             type: 'topup',
             amount,
             description: 'Пополнение через администратора'
@@ -285,7 +306,10 @@ export const useUserStore = create<UserStore>()(
             }
           };
         }),
-      reset: () => set({ user: null, isInitialized: false, needsProfileSetup: false })
+      reset: () => {
+        useBalanceStore.getState().setActiveUser(null);
+        set({ user: null, isInitialized: false, needsProfileSetup: false });
+      }
     }),
     {
       name: 'boost-user-store'
