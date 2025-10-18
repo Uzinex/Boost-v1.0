@@ -31,6 +31,7 @@ body {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
+  position: relative;
 }
 
 @media (max-width: 960px) {
@@ -39,10 +40,19 @@ body {
   }
 }
 
+.app-shell-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f4f6fb;
+}
+
 main {
   padding: 24px;
   background-color: #f4f6fb;
   min-height: 100vh;
+  flex: 1;
+  width: 100%;
 }
 
 .section-title {
@@ -132,6 +142,18 @@ main {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.checkbox-field input {
+  margin-top: 2px;
 }
 
 .form-field label {
@@ -357,6 +379,16 @@ header.app-header {
   z-index: 10;
 }
 
+.mobile-menu-button {
+  display: none;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #1f2937;
+}
+
 header.app-header .user-block {
   display: flex;
   align-items: center;
@@ -370,6 +402,42 @@ header.app-header img {
   object-fit: cover;
 }
 
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  border: none;
+  cursor: pointer;
+  z-index: 30;
+}
+
+@media (max-width: 960px) {
+  header.app-header {
+    gap: 16px;
+  }
+
+  .mobile-menu-button {
+    display: inline-flex;
+  }
+
+  header.app-header .user-block {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  header.app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  header.app-header .user-block {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
 .sidebar {
   background: linear-gradient(180deg, #111827, #1f2937);
   color: #fff;
@@ -377,6 +445,11 @@ header.app-header img {
   display: flex;
   flex-direction: column;
   gap: 32px;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  transition: transform 0.3s ease;
+  z-index: 40;
 }
 
 .sidebar .logo {
@@ -408,23 +481,30 @@ header.app-header img {
 
 @media (max-width: 960px) {
   .sidebar {
-    position: sticky;
+    position: fixed;
+    left: 0;
     top: 0;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px;
-    background: #111827;
+    bottom: 0;
+    transform: translateX(-100%);
+    max-width: 280px;
+    width: 100%;
+    padding: 32px 24px;
+    gap: 24px;
+    box-shadow: 12px 0 24px rgba(15, 23, 42, 0.2);
+  }
+
+  .sidebar.sidebar-open {
+    transform: translateX(0);
   }
 
   .sidebar nav {
-    flex-direction: row;
-    gap: 8px;
+    flex-direction: column;
+    gap: 12px;
   }
 
   .sidebar a {
-    padding: 10px 12px;
-    font-size: 0.85rem;
+    padding: 12px 14px;
+    font-size: 0.95rem;
   }
 }
 
@@ -459,4 +539,29 @@ header.app-header img {
 
 section + section {
   margin-top: 32px;
+}
+
+.registration-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), rgba(124, 58, 237, 0.1));
+}
+
+.registration-card {
+  max-width: 420px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+@media (max-width: 640px) {
+  .orders-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .registration-screen {
+    padding: 24px 12px;
+  }
 }

@@ -18,6 +18,7 @@ const OrdersPage = () => {
   const [type, setType] = useState<OrderType>('channel');
   const [requestedCount, setRequestedCount] = useState(100);
   const [link, setLink] = useState('');
+  const [botAdminConfirmed, setBotAdminConfirmed] = useState(false);
 
   const myOrders = useMemo(() => (user ? orders.filter(order => order.ownerId === user.id) : []), [orders, user]);
   const completedOrders = myOrders.filter(order => order.status === 'completed');
@@ -27,7 +28,7 @@ const OrdersPage = () => {
   const totalCost = requestedCount * pricePerUnit;
   const remainingBalance = user ? user.balance : 0;
   const canAfford = remainingBalance >= totalCost;
-  const isFormValid = canAfford && requestedCount >= 10 && link.includes('t.me');
+  const isFormValid = canAfford && requestedCount >= 10 && link.includes('t.me') && botAdminConfirmed;
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -40,10 +41,19 @@ const OrdersPage = () => {
       return;
     }
 
+    if (!botAdminConfirmed) {
+      pushToast({
+        type: 'error',
+        title: 'Нет доступа',
+        description: 'Добавьте бота в администраторы продвигаемого канала или группы'
+      });
+      return;
+    }
+
     try {
-      createOrder({ type, requestedCount, link: link.trim() });
+      createOrder({ type, requestedCount, link: link.trim(), botIsAdmin: botAdminConfirmed });
       setLink('');
-      pushToast({ type: 'success', title: 'Заказ отправлен на модерацию' });
+      setBotAdminConfirmed(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось создать заказ';
       pushToast({ type: 'error', title: 'Ошибка', description: message });
@@ -110,6 +120,15 @@ const OrdersPage = () => {
             onChange={event => setLink(event.target.value)}
           />
 
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={botAdminConfirmed}
+              onChange={event => setBotAdminConfirmed(event.target.checked)}
+            />
+            <span>Бот добавлен в администраторы выбранного канала или группы</span>
+          </label>
+
           <div className="card" style={{ background: '#f9fafb', border: '1px solid #e5e7eb' }}>
             <div className="order-card" style={{ gap: '8px' }}>
               <span style={{ fontWeight: 600 }}>Итого к списанию</span>
@@ -146,12 +165,19 @@ const OrdersPage = () => {
                   <div className="order-progress">
                     <div className="order-progress-bar" style={{ width: `${completion}%` }} />
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#4b5563', fontSize: '0.9rem' }}>
+                  <div
+                    style={{ display: 'flex', justifyContent: 'space-between', color: '#4b5563', fontSize: '0.9rem' }}
+                  >
                     <span>
                       Привлечено {formatNumber(order.completedCount)} / {formatNumber(order.requestedCount)}
                     </span>
                     <span>Осталось {formatNumber(remaining)}</span>
                   </div>
+                  {!order.botIsAdmin && (
+                    <span className="badge" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#b91c1c' }}>
+                      Требуется проверить права бота
+                    </span>
+                  )}
                 </Card>
               );
             })}

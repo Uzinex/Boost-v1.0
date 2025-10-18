@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 import { ORDER_PRICING, type OrderType } from '../utils/constants';
 import { useUserStore } from './useUserStore';
@@ -21,12 +22,14 @@ export interface Order {
   totalBudget: number;
   status: OrderStatus;
   createdAt: string;
+  botIsAdmin: boolean;
 }
 
 export interface CreateOrderPayload {
   type: OrderType;
   requestedCount: number;
   link: string;
+  botIsAdmin: boolean;
 }
 
 interface OrdersStore {
@@ -36,131 +39,115 @@ interface OrdersStore {
   getOrdersByOwner: (ownerId: string) => Order[];
 }
 
-const seededOrders: Order[] = [
-  {
-    id: 'order-seed-1',
-    ownerId: 'seed-1',
-    ownerName: 'Алишер Юсупов',
-    ownerUsername: 'alisher_pro',
-    ownerAvatar: 'https://api.dicebear.com/7.x/thumbs/svg?seed=alisher',
-    type: 'channel',
-    link: 'https://t.me/uzinex_channel',
-    requestedCount: 150,
-    completedCount: 45,
-    pricePerUnit: ORDER_PRICING.channel,
-    totalBudget: 150 * ORDER_PRICING.channel,
-    status: 'active',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString()
-  },
-  {
-    id: 'order-seed-2',
-    ownerId: 'seed-2',
-    ownerName: 'Нилуфар Сафарова',
-    ownerUsername: 'nilufar',
-    ownerAvatar: 'https://api.dicebear.com/7.x/thumbs/svg?seed=nilufar',
-    type: 'group',
-    link: 'https://t.me/marketing_uz',
-    requestedCount: 80,
-    completedCount: 32,
-    pricePerUnit: ORDER_PRICING.group,
-    totalBudget: 80 * ORDER_PRICING.group,
-    status: 'active',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 36).toISOString()
-  },
-  {
-    id: 'order-seed-3',
-    ownerId: 'seed-3',
-    ownerName: 'Jamshid Web',
-    ownerUsername: 'jamshid_dev',
-    ownerAvatar: 'https://api.dicebear.com/7.x/thumbs/svg?seed=jamshid',
-    type: 'channel',
-    link: 'https://t.me/frontend_lab',
-    requestedCount: 220,
-    completedCount: 220,
-    pricePerUnit: ORDER_PRICING.channel,
-    totalBudget: 220 * ORDER_PRICING.channel,
-    status: 'completed',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 72).toISOString()
+type OrderStoreState = { orders: Order[] };
+
+const storage = createJSONStorage<OrderStoreState>(() => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    return window.localStorage;
   }
-];
+  return {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined
+  };
+});
 
-export const useOrdersStore = create<OrdersStore>((set, get) => ({
-  orders: seededOrders,
-  createOrder: payload => {
-    const user = useUserStore.getState().user;
-    if (!user) {
-      throw new Error('Пользователь не найден');
+export const useOrdersStore = create<OrdersStore>()(
+  persist(
+    (set, get) => ({
+      orders: [],
+      createOrder: payload => {
+        const user = useUserStore.getState().user;
+        if (!user) {
+          throw new Error('Пользователь не найден');
+        }
+
+        const { type, botIsAdmin } = payload;
+        const link = payload.link.trim();
+        const requestedCount = Math.max(10, Math.floor(payload.requestedCount));
+        const pricePerUnit = ORDER_PRICING[type];
+        const totalBudget = requestedCount * pricePerUnit;
+
+        if (user.balance < totalBudget) {
+          throw new Error('Недостаточно средств на балансе');
+        }
+
+        if (!botIsAdmin) {
+          throw new Error('Добавьте бота в администраторы продвигаемого канала или группы');
+        }
+
+        useUserStore.getState().recordOrder(totalBudget);
+
+        const newOrder: Order = {
+          id: crypto.randomUUID(),
+          ownerId: user.id,
+          ownerName: user.fullName,
+          ownerUsername: user.username,
+          ownerAvatar: user.avatarUrl,
+          type,
+          link,
+          requestedCount,
+          completedCount: 0,
+          pricePerUnit,
+          totalBudget,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          botIsAdmin
+        };
+
+        set(state => ({ orders: [newOrder, ...state.orders.filter(order => !order.id.startsWith('order-seed-'))] }));
+
+        useBalanceStore.getState().logEvent({
+          type: 'spend',
+          amount: totalBudget,
+          description: `Создан заказ (${type === 'channel' ? 'канал' : 'группа'}) на ${requestedCount} подписчиков`
+        });
+
+        useToastStore
+          .getState()
+          .push({
+            type: 'success',
+            title: 'Заказ опубликован',
+            description: `Списано ${totalBudget.toFixed(1)} UZT`
+          });
+
+        return newOrder;
+      },
+      incrementCompletion: orderId => {
+        const { orders } = get();
+        const target = orders.find(order => order.id === orderId);
+        if (!target) return;
+
+        if (target.completedCount >= target.requestedCount) {
+          return;
+        }
+
+        const updatedCount = target.completedCount + 1;
+        const status: OrderStatus = updatedCount >= target.requestedCount ? 'completed' : 'active';
+
+        set(state => ({
+          orders: state.orders.map(order =>
+            order.id === orderId
+              ? {
+                  ...order,
+                  completedCount: updatedCount,
+                  status
+                }
+              : order
+          )
+        }));
+      },
+      getOrdersByOwner: ownerId => get().orders.filter(order => order.ownerId === ownerId)
+    }),
+    {
+      name: 'boost-orders-store',
+      storage,
+      partialize: state => ({ orders: state.orders }),
+      onRehydrateStorage: () => state => {
+        if (state?.orders) {
+          state.orders = state.orders.filter(order => !order.id.startsWith('order-seed-'));
+        }
+      }
     }
-
-    const { type } = payload;
-    const link = payload.link.trim();
-    const requestedCount = Math.max(10, Math.floor(payload.requestedCount));
-    const pricePerUnit = ORDER_PRICING[type];
-    const totalBudget = requestedCount * pricePerUnit;
-
-    if (user.balance < totalBudget) {
-      throw new Error('Недостаточно средств на балансе');
-    }
-
-    useUserStore.getState().recordOrder(totalBudget);
-
-    const newOrder: Order = {
-      id: crypto.randomUUID(),
-      ownerId: user.id,
-      ownerName: user.fullName,
-      ownerUsername: user.username,
-      ownerAvatar: user.avatarUrl,
-      type,
-      link,
-      requestedCount,
-      completedCount: 0,
-      pricePerUnit,
-      totalBudget,
-      status: 'active',
-      createdAt: new Date().toISOString()
-    };
-
-    set(state => ({ orders: [newOrder, ...state.orders] }));
-
-    useBalanceStore.getState().logEvent({
-      type: 'spend',
-      amount: totalBudget,
-      description: `Создан заказ (${type === 'channel' ? 'канал' : 'группа'}) на ${requestedCount} подписчиков`
-    });
-
-    useToastStore
-      .getState()
-      .push({
-        type: 'success',
-        title: 'Заказ создан',
-        description: `Списано ${totalBudget.toFixed(1)} UZT`
-      });
-
-    return newOrder;
-  },
-  incrementCompletion: orderId => {
-    const { orders } = get();
-    const target = orders.find(order => order.id === orderId);
-    if (!target) return;
-
-    if (target.completedCount >= target.requestedCount) {
-      return;
-    }
-
-    const updatedCount = target.completedCount + 1;
-    const status: OrderStatus = updatedCount >= target.requestedCount ? 'completed' : 'active';
-
-    set(state => ({
-      orders: state.orders.map(order =>
-        order.id === orderId
-          ? {
-              ...order,
-              completedCount: updatedCount,
-              status
-            }
-          : order
-      )
-    }));
-  },
-  getOrdersByOwner: ownerId => get().orders.filter(order => order.ownerId === ownerId)
-}));
+  )
+);

@@ -1,11 +1,18 @@
 import { formatUZT } from '../../utils/formatters';
 import { useUserStore } from '../../store/useUserStore';
 
-export const Header = () => {
+interface HeaderProps {
+  onMenuToggle: () => void;
+}
+
+export const Header = ({ onMenuToggle }: HeaderProps) => {
   const user = useUserStore(state => state.user);
 
   return (
     <header className="app-header">
+      <button type="button" className="mobile-menu-button" onClick={onMenuToggle} aria-label="Открыть меню">
+        ☰
+      </button>
       <div>
         <div style={{ fontWeight: 600, fontSize: '1.1rem' }}>Boost • Telegram WebApp</div>
         <small style={{ color: '#6b7280' }}>Управляйте продвижением и заданиями в одном месте</small>

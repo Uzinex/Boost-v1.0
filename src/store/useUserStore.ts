@@ -34,7 +34,9 @@ export interface UserProfile {
 interface UserStore {
   user: UserProfile | null;
   isInitialized: boolean;
+  needsProfileSetup: boolean;
   initialize: (telegramUser?: TelegramWebAppUser | null) => void;
+  completeRegistration: (payload: { fullName: string; username?: string }) => void;
   adjustBalance: (amount: number) => void;
   recordOrder: (spentAmount: number) => void;
   recordTaskCompletion: (rewardAmount: number) => number;
@@ -47,69 +49,137 @@ interface UserStore {
 
 const fullNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string => {
   if (!telegramUser) {
-    return 'Гость Boost';
+    return '';
   }
 
   const firstName = telegramUser.first_name ?? '';
   const lastName = telegramUser.last_name ?? '';
   const full = `${firstName} ${lastName}`.trim();
-  return full || telegramUser.username || 'Пользователь Boost';
+  return full || telegramUser.username || '';
 };
 
-const firstNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string =>
-  telegramUser?.first_name ?? telegramUser?.username ?? 'Boost';
+const firstNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string | undefined =>
+  telegramUser?.first_name ?? telegramUser?.username ?? undefined;
+
+const buildAvatarUrl = (seed?: string) =>
+  `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(seed || 'boost-user')}`;
 
 export const useUserStore = create<UserStore>()(
   persist(
     (set, get) => ({
       user: null,
       isInitialized: false,
+      needsProfileSetup: false,
       initialize: (telegramUser = null) => {
         const existing = get().user;
 
-        const baseData = {
-          telegramId: telegramUser?.id ?? existing?.telegramId,
-          firstName: firstNameFromTelegram(telegramUser) || existing?.firstName || 'Boost',
-          lastName: telegramUser?.last_name ?? existing?.lastName,
-          fullName: fullNameFromTelegram(telegramUser) || existing?.fullName || 'Boost Пользователь',
-          username: telegramUser?.username ?? existing?.username,
-          avatarUrl:
-            telegramUser?.photo_url ||
-            existing?.avatarUrl ||
-            `https://api.dicebear.com/7.x/thumbs/svg?seed=${telegramUser?.username ?? 'boost-user'}`
-        };
+        const telegramData = telegramUser
+          ? {
+              telegramId: telegramUser.id,
+              firstName: firstNameFromTelegram(telegramUser) ?? existing?.firstName ?? 'Boost',
+              lastName: telegramUser.last_name ?? existing?.lastName,
+              fullName:
+                fullNameFromTelegram(telegramUser) || existing?.fullName || 'Boost Пользователь',
+              username: telegramUser.username ?? existing?.username,
+              avatarUrl:
+                telegramUser.photo_url ??
+                existing?.avatarUrl ??
+                buildAvatarUrl(telegramUser.username ?? telegramUser.first_name ?? 'boost-user')
+            }
+          : {};
 
         if (existing) {
           set({
             user: {
               ...existing,
-              ...baseData
+              ...telegramData
             },
-            isInitialized: true
+            isInitialized: true,
+            needsProfileSetup: false
           });
+          return;
+        }
+
+        if (!telegramUser) {
+          set({ user: null, isInitialized: true, needsProfileSetup: true });
           return;
         }
 
         const referralCode = crypto.randomUUID().split('-')[0];
 
+        const baseFirstName = telegramData.firstName ?? 'Boost';
+
+        const newUser: UserProfile = {
+          id: crypto.randomUUID(),
+          balance: INITIAL_BALANCE,
+          lifetimeEarned: 0,
+          lifetimeSpent: 0,
+          ordersPlaced: 0,
+          tasksCompleted: 0,
+          totalTopUps: 0,
+          totalTopUpAmount: 0,
+          referralsCount: 0,
+          referralEarnings: 0,
+          referralCode,
+          createdAt: new Date().toISOString(),
+          firstName: baseFirstName,
+          lastName: telegramData.lastName,
+          fullName: telegramData.fullName || baseFirstName,
+          username: telegramData.username,
+          telegramId: telegramData.telegramId,
+          avatarUrl: telegramData.avatarUrl ?? buildAvatarUrl(baseFirstName),
+          referrer: undefined
+        };
+
         set({
-          user: {
-            id: crypto.randomUUID(),
-            balance: INITIAL_BALANCE,
-            lifetimeEarned: 0,
-            lifetimeSpent: 0,
-            ordersPlaced: 0,
-            tasksCompleted: 0,
-            totalTopUps: 0,
-            totalTopUpAmount: 0,
-            referralsCount: 0,
-            referralEarnings: 0,
-            referralCode,
-            createdAt: new Date().toISOString(),
-            ...baseData
-          },
-          isInitialized: true
+          user: newUser,
+          isInitialized: true,
+          needsProfileSetup: false
         });
+
+        useBalanceStore.getState().logEvent({
+          type: 'topup',
+          amount: INITIAL_BALANCE,
+          description: 'Начислен стартовый баланс'
+        });
+      },
+      completeRegistration: payload => {
+        const trimmedName = payload.fullName.trim();
+        if (!trimmedName) {
+          throw new Error('Укажите имя и фамилию');
+        }
+
+        const nameParts = trimmedName.split(/\s+/);
+        const firstName = nameParts[0] ?? trimmedName;
+        const lastName = nameParts.slice(1).join(' ') || undefined;
+        const normalizedUsername = payload.username
+          ? payload.username.replace(/^@+/, '').trim() || undefined
+          : undefined;
+        const referralCode = crypto.randomUUID().split('-')[0];
+
+        const newUser: UserProfile = {
+          id: crypto.randomUUID(),
+          balance: INITIAL_BALANCE,
+          lifetimeEarned: 0,
+          lifetimeSpent: 0,
+          ordersPlaced: 0,
+          tasksCompleted: 0,
+          totalTopUps: 0,
+          totalTopUpAmount: 0,
+          referralsCount: 0,
+          referralEarnings: 0,
+          referralCode,
+          createdAt: new Date().toISOString(),
+          firstName,
+          lastName,
+          fullName: trimmedName,
+          username: normalizedUsername,
+          avatarUrl: buildAvatarUrl(normalizedUsername || trimmedName),
+          telegramId: undefined,
+          referrer: undefined
+        };
+
+        set({ user: newUser, isInitialized: true, needsProfileSetup: false });
 
         useBalanceStore.getState().logEvent({
           type: 'topup',
@@ -215,7 +285,7 @@ export const useUserStore = create<UserStore>()(
             }
           };
         }),
-      reset: () => set({ user: null, isInitialized: false })
+      reset: () => set({ user: null, isInitialized: false, needsProfileSetup: false })
     }),
     {
       name: 'boost-user-store'
