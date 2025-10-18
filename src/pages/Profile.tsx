@@ -1,21 +1,14 @@
 import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
 import { useUserStore } from '../store/useUserStore';
 import { formatNumber, formatUZT } from '../utils/formatters';
 import { TOPUP_TIERS } from '../utils/constants';
 
 const ProfilePage = () => {
   const user = useUserStore(state => state.user);
-  const recordTopUp = useUserStore(state => state.recordTopUp);
 
   if (!user) {
     return null;
   }
-
-  const handleMockTopUp = () => {
-    // Demo helper to visualise top-up flow in the webapp
-    recordTopUp(500);
-  };
 
   return (
     <div className="grid" style={{ gap: '24px' }}>
@@ -60,9 +53,15 @@ const ProfilePage = () => {
           Для пополнения напишите администратору <strong>@feruzdilov</strong>. Укажите желаемую сумму и ваш логин, а также
           предоставьте боту права администратора в продвигаемом канале или группе для корректного учёта подписок.
         </p>
-        <Button style={{ marginTop: '16px', alignSelf: 'flex-start' }} onClick={handleMockTopUp}>
-          Зачислить тестовые 500 UZT
-        </Button>
+        <a
+          className="button"
+          style={{ marginTop: '16px', alignSelf: 'flex-start', display: 'inline-flex' }}
+          href="https://t.me/feruzdilov"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Написать администратору
+        </a>
       </Card>
 
       <Card title="Тарифы на пополнение">

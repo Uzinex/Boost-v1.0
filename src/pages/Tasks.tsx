@@ -18,9 +18,7 @@ const TasksPage = () => {
     return null;
   }
 
-  const availableOrders = orders.filter(
-    order => order.ownerId !== user.id && order.status !== 'completed' && !hasCompleted(order.id)
-  );
+  const availableOrders = orders.filter(order => order.status !== 'completed');
 
   const handleComplete = (orderId: string) => {
     try {
@@ -48,6 +46,8 @@ const TasksPage = () => {
             {availableOrders.map(order => {
               const reward = TASK_REWARD[order.type];
               const remaining = order.requestedCount - order.completedCount;
+              const isOwnOrder = order.ownerId === user.id;
+              const alreadyCompleted = hasCompleted(order.id);
 
               return (
                 <Card key={order.id} className="task-card">
@@ -72,8 +72,13 @@ const TasksPage = () => {
                     <a className="link-button" href={order.link} target="_blank" rel="noreferrer">
                       Открыть {order.type === 'channel' ? 'канал' : 'группу'}
                     </a>
-                    <Button type="button" onClick={() => handleComplete(order.id)}>
-                      Подтвердить выполнение
+                    <Button
+                      type="button"
+                      onClick={() => handleComplete(order.id)}
+                      disabled={isOwnOrder || alreadyCompleted}
+                      title={isOwnOrder ? 'Вы автор заказа' : alreadyCompleted ? 'Вы уже выполнили это задание' : undefined}
+                    >
+                      {isOwnOrder ? 'Ваш заказ' : alreadyCompleted ? 'Задание выполнено' : 'Подтвердить выполнение'}
                     </Button>
                   </div>
                 </Card>

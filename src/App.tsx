@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Route, Routes } from 'react-router-dom';
 
 import { Header } from './components/layout/Header';
@@ -12,10 +12,14 @@ import TasksPage from './pages/Tasks';
 import ProfilePage from './pages/Profile';
 import { useUserStore } from './store/useUserStore';
 import { getTelegramUser } from './utils/telegram';
+import { ManualRegistration } from './components/auth/ManualRegistration';
 
 const App = () => {
   const initialize = useUserStore(state => state.initialize);
   const isInitialized = useUserStore(state => state.isInitialized);
+  const needsProfileSetup = useUserStore(state => state.needsProfileSetup);
+
+  const [isSidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const user = getTelegramUser();
@@ -26,11 +30,21 @@ const App = () => {
     return <Loader label="Загружаем данные профиля" />;
   }
 
+  if (needsProfileSetup) {
+    return (
+      <>
+        <ManualRegistration />
+        <ToastContainer />
+      </>
+    );
+  }
+
   return (
     <div className="app-shell">
-      <Sidebar />
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-        <Header />
+      <Sidebar isMobileOpen={isSidebarOpen} onNavigate={() => setSidebarOpen(false)} />
+      {isSidebarOpen && <button type="button" className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      <div className="app-shell-content">
+        <Header onMenuToggle={() => setSidebarOpen(prev => !prev)} />
         <main>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
