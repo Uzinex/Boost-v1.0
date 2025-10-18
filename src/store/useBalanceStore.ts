@@ -13,11 +13,14 @@ export interface BalanceEvent {
 
 interface BalanceStore {
   history: BalanceEvent[];
-  logEvent: (event: Omit<BalanceEvent, 'id' | 'createdAt'> & { createdAt?: string }) => void;
-  getSummaryByType: (type: BalanceEventType) => number;
+  activeUserId: string | null;
+  historyByUser: Record<string, BalanceEvent[]>;
+  setActiveUser: (userId: string | null) => void;
+  logEvent: (userId: string, event: Omit<BalanceEvent, 'id' | 'createdAt'> & { createdAt?: string }) => void;
+  getSummaryByType: (userId: string, type: BalanceEventType) => number;
 }
 
-type BalanceState = { history: BalanceEvent[] };
+type BalanceState = { historyByUser: Record<string, BalanceEvent[]>; activeUserId: string | null };
 
 const storage = createJSONStorage<BalanceState>(() => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -34,7 +37,18 @@ export const useBalanceStore = create<BalanceStore>()(
   persist(
     (set, get) => ({
       history: [],
-      logEvent: event => {
+      activeUserId: null,
+      historyByUser: {},
+      setActiveUser: userId =>
+        set(state => ({
+          activeUserId: userId,
+          history: userId ? state.historyByUser[userId] ?? [] : []
+        })),
+      logEvent: (userId, event) => {
+        if (!userId) {
+          return;
+        }
+
         const entry: BalanceEvent = {
           id: crypto.randomUUID(),
           type: event.type,
@@ -43,19 +57,35 @@ export const useBalanceStore = create<BalanceStore>()(
           createdAt: event.createdAt ?? new Date().toISOString()
         };
 
-        set(state => ({
-          history: [entry, ...state.history].slice(0, 100)
-        }));
+        set(state => {
+          const previous = state.historyByUser[userId] ?? [];
+          const updated = [entry, ...previous].slice(0, 100);
+          const isActive = state.activeUserId === userId;
+
+          return {
+            historyByUser: {
+              ...state.historyByUser,
+              [userId]: updated
+            },
+            history: isActive ? updated : state.history
+          };
+        });
       },
-      getSummaryByType: type =>
-        get().history
-          .filter(item => item.type === type)
-          .reduce((total, item) => total + item.amount, 0)
+      getSummaryByType: (userId, type) => {
+        const history = get().historyByUser[userId] ?? [];
+        return history.filter(item => item.type === type).reduce((total, item) => total + item.amount, 0);
+      }
     }),
     {
       name: 'boost-balance-store',
       storage,
-      partialize: state => ({ history: state.history })
+      partialize: state => ({ historyByUser: state.historyByUser, activeUserId: state.activeUserId }),
+      onRehydrateStorage: () => state => {
+        if (state) {
+          const activeUserId = state.activeUserId;
+          state.history = activeUserId ? state.historyByUser[activeUserId] ?? [] : [];
+        }
+      }
     }
   )
 );

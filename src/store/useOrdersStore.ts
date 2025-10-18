@@ -97,7 +97,7 @@ export const useOrdersStore = create<OrdersStore>()(
 
         set(state => ({ orders: [newOrder, ...state.orders.filter(order => !order.id.startsWith('order-seed-'))] }));
 
-        useBalanceStore.getState().logEvent({
+        useBalanceStore.getState().logEvent(user.id, {
           type: 'spend',
           amount: totalBudget,
           description: `Создан заказ (${type === 'channel' ? 'канал' : 'группа'}) на ${requestedCount} подписчиков`

@@ -13,6 +13,7 @@ export interface TelegramWebApp {
   ready?: () => void;
   expand?: () => void;
   colorScheme?: 'light' | 'dark';
+  openTelegramLink?: (url: string) => void;
 }
 
 declare global {
@@ -40,4 +41,18 @@ export const getTelegramUser = (): TelegramWebAppUser | null => {
 
   const user = webApp?.initDataUnsafe?.user;
   return user ?? null;
+};
+
+export const openTelegramLink = (url: string) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const webApp = window.Telegram?.WebApp;
+  if (webApp?.openTelegramLink) {
+    webApp.openTelegramLink(url);
+    return;
+  }
+
+  window.open(url, '_blank');
 };
