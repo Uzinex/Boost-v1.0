@@ -58,7 +58,7 @@ const ProfilePage = () => {
         <Button
           type="button"
           style={{ marginTop: '16px', alignSelf: 'flex-start', display: 'inline-flex' }}
-          onClick={() => openTelegramLink('https://t.me/feruzdilov')}
+          onClick={() => openTelegramLink('@feruzdilov')}
         >
           Написать администратору
         </Button>
