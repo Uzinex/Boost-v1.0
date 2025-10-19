@@ -33,6 +33,8 @@ export interface UserProfile {
 
 interface UserStore {
   user: UserProfile | null;
+  profiles: Record<string, UserProfile>;
+  activeProfileKey: string | null;
   isInitialized: boolean;
   needsProfileSetup: boolean;
   initialize: (telegramUser?: TelegramWebAppUser | null) => void;
@@ -46,6 +48,29 @@ interface UserStore {
   incrementReferrals: () => void;
   reset: () => void;
 }
+
+const MANUAL_PROFILE_KEY = 'manual-profile';
+
+const buildTelegramProfileKey = (telegramId: number) => `telegram-${telegramId}`;
+
+const withUpdatedActiveProfile = (
+  state: UserStore,
+  updater: (current: UserProfile) => UserProfile
+): Partial<UserStore> => {
+  if (!state.user || !state.activeProfileKey) {
+    return {};
+  }
+
+  const updatedUser = updater(state.user);
+
+  return {
+    user: updatedUser,
+    profiles: {
+      ...state.profiles,
+      [state.activeProfileKey]: updatedUser
+    }
+  };
+};
 
 const fullNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string => {
   if (!telegramUser) {
@@ -64,104 +89,129 @@ const firstNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string
 const buildAvatarUrl = (seed?: string) =>
   `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(seed || 'boost-user')}`;
 
+const baseState = {
+  user: null,
+  profiles: {},
+  activeProfileKey: null,
+  isInitialized: false,
+  needsProfileSetup: false
+};
+
 export const useUserStore = create<UserStore>()(
   persist(
     (set, get) => ({
-      user: null,
-      isInitialized: false,
-      needsProfileSetup: false,
+      ...baseState,
       initialize: (telegramUser = null) => {
-        const existing = get().user;
+        const { profiles, activeProfileKey } = get();
 
-        const telegramData = telegramUser
-          ? {
-              telegramId: telegramUser.id,
-              firstName: firstNameFromTelegram(telegramUser) ?? existing?.firstName ?? 'Boost',
-              lastName: telegramUser.last_name ?? existing?.lastName,
-              fullName:
-                fullNameFromTelegram(telegramUser) || existing?.fullName || 'Boost Пользователь',
-              username: telegramUser.username ?? existing?.username,
-              avatarUrl:
-                telegramUser.photo_url ??
-                existing?.avatarUrl ??
-                buildAvatarUrl(telegramUser.username ?? telegramUser.first_name ?? 'boost-user')
-            }
-          : {};
+        if (telegramUser) {
+          const profileKey = buildTelegramProfileKey(telegramUser.id);
+          const existingProfile = profiles[profileKey];
 
-        if (existing) {
-          const isDifferentTelegramUser = Boolean(
-            telegramUser && existing.telegramId && existing.telegramId !== telegramUser.id
-          );
+          const telegramData = {
+            telegramId: telegramUser.id,
+            firstName:
+              firstNameFromTelegram(telegramUser) ?? existingProfile?.firstName ?? 'Boost',
+            lastName: telegramUser.last_name ?? existingProfile?.lastName,
+            fullName:
+              fullNameFromTelegram(telegramUser) || existingProfile?.fullName || 'Boost Пользователь',
+            username: telegramUser.username ?? existingProfile?.username,
+            avatarUrl:
+              telegramUser.photo_url ??
+              existingProfile?.avatarUrl ??
+              buildAvatarUrl(telegramUser.username ?? telegramUser.first_name ?? 'boost-user')
+          };
 
-          const hasSwitchedFromManualProfile = Boolean(telegramUser && !existing.telegramId);
+          if (existingProfile) {
+            const updatedProfile: UserProfile = {
+              ...existingProfile,
+              ...telegramData
+            };
 
-          if (!isDifferentTelegramUser && !hasSwitchedFromManualProfile) {
-            useBalanceStore.getState().setActiveUser(existing.id);
-            set({
-              user: {
-                ...existing,
-                ...telegramData
+            useBalanceStore.getState().setActiveUser(updatedProfile.id);
+            set(state => ({
+              user: updatedProfile,
+              profiles: {
+                ...state.profiles,
+                [profileKey]: updatedProfile
               },
+              activeProfileKey: profileKey,
               isInitialized: true,
               needsProfileSetup: false
-            });
-            return;
-          }
-        }
-
-        if (!telegramUser) {
-          useBalanceStore.getState().setActiveUser(existing?.id ?? null);
-          if (existing) {
-            set({
-              user: existing,
-              isInitialized: true,
-              needsProfileSetup: false
-            });
+            }));
             return;
           }
 
-          set({ user: null, isInitialized: true, needsProfileSetup: true });
+          const referralCode = crypto.randomUUID().split('-')[0];
+          const baseFirstName = telegramData.firstName ?? 'Boost';
+
+          const newUser: UserProfile = {
+            id: crypto.randomUUID(),
+            balance: INITIAL_BALANCE,
+            lifetimeEarned: 0,
+            lifetimeSpent: 0,
+            ordersPlaced: 0,
+            tasksCompleted: 0,
+            totalTopUps: 0,
+            totalTopUpAmount: 0,
+            referralsCount: 0,
+            referralEarnings: 0,
+            referralCode,
+            createdAt: new Date().toISOString(),
+            firstName: baseFirstName,
+            lastName: telegramData.lastName,
+            fullName: telegramData.fullName || baseFirstName,
+            username: telegramData.username,
+            telegramId: telegramData.telegramId,
+            avatarUrl: telegramData.avatarUrl ?? buildAvatarUrl(baseFirstName),
+            referrer: undefined
+          };
+
+          useBalanceStore.getState().setActiveUser(newUser.id);
+          set(state => ({
+            user: newUser,
+            profiles: {
+              ...state.profiles,
+              [profileKey]: newUser
+            },
+            activeProfileKey: profileKey,
+            isInitialized: true,
+            needsProfileSetup: false
+          }));
+
+          useBalanceStore.getState().logEvent(newUser.id, {
+            type: 'topup',
+            amount: INITIAL_BALANCE,
+            description: 'Начислен стартовый баланс'
+          });
           return;
         }
 
-        const referralCode = crypto.randomUUID().split('-')[0];
+        if (activeProfileKey && profiles[activeProfileKey]) {
+          const activeProfile = profiles[activeProfileKey];
+          useBalanceStore.getState().setActiveUser(activeProfile.id);
+          set({
+            user: activeProfile,
+            isInitialized: true,
+            needsProfileSetup: false
+          });
+          return;
+        }
 
-        const baseFirstName = telegramData.firstName ?? 'Boost';
+        const manualProfile = profiles[MANUAL_PROFILE_KEY];
+        if (manualProfile) {
+          useBalanceStore.getState().setActiveUser(manualProfile.id);
+          set({
+            user: manualProfile,
+            activeProfileKey: MANUAL_PROFILE_KEY,
+            isInitialized: true,
+            needsProfileSetup: false
+          });
+          return;
+        }
 
-        const newUser: UserProfile = {
-          id: crypto.randomUUID(),
-          balance: INITIAL_BALANCE,
-          lifetimeEarned: 0,
-          lifetimeSpent: 0,
-          ordersPlaced: 0,
-          tasksCompleted: 0,
-          totalTopUps: 0,
-          totalTopUpAmount: 0,
-          referralsCount: 0,
-          referralEarnings: 0,
-          referralCode,
-          createdAt: new Date().toISOString(),
-          firstName: baseFirstName,
-          lastName: telegramData.lastName,
-          fullName: telegramData.fullName || baseFirstName,
-          username: telegramData.username,
-          telegramId: telegramData.telegramId,
-          avatarUrl: telegramData.avatarUrl ?? buildAvatarUrl(baseFirstName),
-          referrer: undefined
-        };
-
-        useBalanceStore.getState().setActiveUser(newUser.id);
-        set({
-          user: newUser,
-          isInitialized: true,
-          needsProfileSetup: false
-        });
-
-        useBalanceStore.getState().logEvent(newUser.id, {
-          type: 'topup',
-          amount: INITIAL_BALANCE,
-          description: 'Начислен стартовый баланс'
-        });
+        useBalanceStore.getState().setActiveUser(null);
+        set({ user: null, isInitialized: true, needsProfileSetup: true });
       },
       completeRegistration: payload => {
         const trimmedName = payload.fullName.trim();
@@ -200,7 +250,16 @@ export const useUserStore = create<UserStore>()(
         };
 
         useBalanceStore.getState().setActiveUser(newUser.id);
-        set({ user: newUser, isInitialized: true, needsProfileSetup: false });
+        set(state => ({
+          user: newUser,
+          profiles: {
+            ...state.profiles,
+            [MANUAL_PROFILE_KEY]: newUser
+          },
+          activeProfileKey: MANUAL_PROFILE_KEY,
+          isInitialized: true,
+          needsProfileSetup: false
+        }));
 
         useBalanceStore.getState().logEvent(newUser.id, {
           type: 'topup',
@@ -210,109 +269,120 @@ export const useUserStore = create<UserStore>()(
       },
       adjustBalance: amount =>
         set(state => {
-          if (!state.user) return state;
-          return {
-            user: {
-              ...state.user,
-              balance: Math.max(0, state.user.balance + amount)
-            }
-          };
+          if (!state.user || !state.activeProfileKey) return state;
+
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            balance: Math.max(0, current.balance + amount)
+          }));
         }),
       recordOrder: spentAmount =>
         set(state => {
-          if (!state.user) return state;
+          if (!state.user || !state.activeProfileKey) return state;
 
           const referralEarnings = state.user.referrer
             ? spentAmount * state.user.referrer.commissionRate
             : 0;
 
-          return {
-            user: {
-              ...state.user,
-              balance: Math.max(0, state.user.balance - spentAmount),
-              lifetimeSpent: state.user.lifetimeSpent + spentAmount,
-              ordersPlaced: state.user.ordersPlaced + 1,
-              referralEarnings: state.user.referralEarnings + referralEarnings
-            }
-          };
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            balance: Math.max(0, current.balance - spentAmount),
+            lifetimeSpent: current.lifetimeSpent + spentAmount,
+            ordersPlaced: current.ordersPlaced + 1,
+            referralEarnings: current.referralEarnings + referralEarnings
+          }));
         }),
       recordTaskCompletion: rewardAmount => {
         let referralCommission = 0;
         set(state => {
-          if (!state.user) return state;
+          if (!state.user || !state.activeProfileKey) return state;
 
           referralCommission = state.user.referrer ? rewardAmount * REFERRAL_PERCENTAGE : 0;
 
-          return {
-            user: {
-              ...state.user,
-              balance: state.user.balance + rewardAmount,
-              lifetimeEarned: state.user.lifetimeEarned + rewardAmount,
-              tasksCompleted: state.user.tasksCompleted + 1
-            }
-          };
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            balance: current.balance + rewardAmount,
+            lifetimeEarned: current.lifetimeEarned + rewardAmount,
+            tasksCompleted: current.tasksCompleted + 1
+          }));
         });
         return referralCommission;
       },
       recordTopUp: amount =>
         set(state => {
-          if (!state.user) return state;
+          if (!state.user || !state.activeProfileKey) return state;
+
           useBalanceStore.getState().logEvent(state.user.id, {
             type: 'topup',
             amount,
             description: 'Пополнение через администратора'
           });
-          return {
-            user: {
-              ...state.user,
-              balance: state.user.balance + amount,
-              totalTopUps: state.user.totalTopUps + 1,
-              totalTopUpAmount: state.user.totalTopUpAmount + amount
-            }
-          };
+
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            balance: current.balance + amount,
+            totalTopUps: current.totalTopUps + 1,
+            totalTopUpAmount: current.totalTopUpAmount + amount
+          }));
         }),
       addReferralEarnings: amount =>
         set(state => {
-          if (!state.user) return state;
-          return {
-            user: {
-              ...state.user,
-              balance: state.user.balance + amount,
-              referralEarnings: state.user.referralEarnings + amount
-            }
-          };
+          if (!state.user || !state.activeProfileKey) return state;
+
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            balance: current.balance + amount,
+            referralEarnings: current.referralEarnings + amount
+          }));
         }),
       setReferrer: fullName =>
         set(state => {
-          if (!state.user) return state;
-          return {
-            user: {
-              ...state.user,
-              referrer: {
-                id: `ref-${fullName.toLowerCase().replace(/\s+/g, '-')}`,
-                fullName,
-                commissionRate: REFERRAL_PERCENTAGE
-              }
+          if (!state.user || !state.activeProfileKey) return state;
+
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            referrer: {
+              id: `ref-${fullName.toLowerCase().replace(/\s+/g, '-')}`,
+              fullName,
+              commissionRate: REFERRAL_PERCENTAGE
             }
-          };
+          }));
         }),
       incrementReferrals: () =>
         set(state => {
-          if (!state.user) return state;
-          return {
-            user: {
-              ...state.user,
-              referralsCount: state.user.referralsCount + 1
-            }
-          };
+          if (!state.user || !state.activeProfileKey) return state;
+
+          return withUpdatedActiveProfile(state, current => ({
+            ...current,
+            referralsCount: current.referralsCount + 1
+          }));
         }),
       reset: () => {
         useBalanceStore.getState().setActiveUser(null);
-        set({ user: null, isInitialized: false, needsProfileSetup: false });
+        set(state => {
+          if (!state.activeProfileKey) {
+            return {
+              ...baseState,
+              profiles: state.profiles
+            };
+          }
+
+          const { [state.activeProfileKey]: _removed, ...restProfiles } = state.profiles;
+
+          return {
+            ...baseState,
+            profiles: restProfiles
+          };
+        });
       }
     }),
     {
-      name: 'boost-user-store'
+      name: 'boost-user-store',
+      version: 2,
+      migrate: () => ({
+        ...baseState,
+        needsProfileSetup: true
+      })
     }
   )
 );

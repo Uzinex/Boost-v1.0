@@ -49,10 +49,52 @@ export const openTelegramLink = (url: string) => {
   }
 
   const webApp = window.Telegram?.WebApp;
+  const target = url.trim();
+
+  const { webUrl, deepLink } = (() => {
+    if (!target) {
+      return { webUrl: 'https://t.me/', deepLink: undefined };
+    }
+
+    if (target.startsWith('tg://')) {
+      const match = target.match(/domain=([^&]+)/i);
+      const username = match?.[1];
+      return {
+        deepLink: target,
+        webUrl: username ? `https://t.me/${username}` : 'https://t.me/'
+      };
+    }
+
+    if (/^https?:\/\/t\.me\//i.test(target)) {
+      const username = target.replace(/^https?:\/\/t\.me\//i, '').split(/[/?]/)[0];
+      return {
+        webUrl: target,
+        deepLink: username ? `tg://resolve?domain=${username}` : target
+      };
+    }
+
+    if (target.startsWith('@')) {
+      const username = target.replace(/^@+/, '');
+      return {
+        webUrl: `https://t.me/${username}`,
+        deepLink: `tg://resolve?domain=${username}`
+      };
+    }
+
+    if (/^[a-zA-Z0-9_]+$/.test(target)) {
+      return {
+        webUrl: `https://t.me/${target}`,
+        deepLink: `tg://resolve?domain=${target}`
+      };
+    }
+
+    return { webUrl: target, deepLink: undefined };
+  })();
+
   if (webApp?.openTelegramLink) {
-    webApp.openTelegramLink(url);
+    webApp.openTelegramLink(deepLink ?? webUrl);
     return;
   }
 
-  window.open(url, '_blank');
+  window.open(webUrl, '_blank');
 };
