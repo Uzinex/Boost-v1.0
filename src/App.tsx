@@ -11,20 +11,40 @@ import OrdersPage from './pages/Orders';
 import TasksPage from './pages/Tasks';
 import ProfilePage from './pages/Profile';
 import { useUserStore } from './store/useUserStore';
-import { getTelegramUser } from './utils/telegram';
-import { ManualRegistration } from './components/auth/ManualRegistration';
+import { getTelegramUser, launchedFromStartCommand } from './utils/telegram';
+import { AuthScreen } from './components/auth/AuthScreen';
+import { useToastStore } from './store/useToastStore';
 
 const App = () => {
   const initialize = useUserStore(state => state.initialize);
   const isInitialized = useUserStore(state => state.isInitialized);
   const needsProfileSetup = useUserStore(state => state.needsProfileSetup);
+  const pushToast = useToastStore(state => state.push);
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const [welcomeShown, setWelcomeShown] = useState(false);
 
   useEffect(() => {
     const user = getTelegramUser();
     initialize(user);
   }, [initialize]);
+
+  useEffect(() => {
+    if (!isInitialized || needsProfileSetup || welcomeShown) {
+      return;
+    }
+
+    const fromStartCommand = launchedFromStartCommand();
+    pushToast({
+      type: 'success',
+      title: 'Добро пожаловать!',
+      description: fromStartCommand
+        ? 'Приложение запущено через команду /start. Удачной работы!'
+        : 'Рады видеть вас в Boost!'
+    });
+
+    setWelcomeShown(true);
+  }, [isInitialized, needsProfileSetup, welcomeShown, pushToast]);
 
   if (!isInitialized) {
     return <Loader label="Загружаем данные профиля" />;
@@ -33,7 +53,7 @@ const App = () => {
   if (needsProfileSetup) {
     return (
       <>
-        <ManualRegistration />
+        <AuthScreen />
         <ToastContainer />
       </>
     );
