@@ -2,9 +2,10 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 import { INITIAL_BALANCE, REFERRAL_PERCENTAGE } from '../utils/constants';
-import type { TelegramWebAppUser } from '../utils/telegram';
+import type { TelegramWebAppUser } from '../types/telegram';
 import { useBalanceStore } from './useBalanceStore';
 import { hashPassword } from '../utils/security';
+import { environment, resolveManualTelegramUser } from '../utils/environment';
 
 export interface UserProfile {
   id: string;
@@ -136,8 +137,11 @@ export const useUserStore = create<UserStore>()(
         const state = get();
         const { user, activeProfileKey, profiles } = state;
 
+        const manualTelegramUser = environment.allowManualOnboarding ? resolveManualTelegramUser() : null;
+        const effectiveTelegramUser = telegramUser ?? manualTelegramUser;
+
         if (user && activeProfileKey) {
-          const updatedUser = telegramUser?.id === user.telegramId ? mergeWithTelegramData(user, telegramUser) : user;
+          const updatedUser = effectiveTelegramUser?.id === user.telegramId ? mergeWithTelegramData(user, effectiveTelegramUser) : user;
           useBalanceStore.getState().setActiveUser(updatedUser.id);
           set({
             user: updatedUser,
@@ -153,12 +157,12 @@ export const useUserStore = create<UserStore>()(
 
         useBalanceStore.getState().setActiveUser(null);
 
-        if (telegramUser) {
-          const profileKey = buildTelegramProfileKey(telegramUser.id);
+        if (effectiveTelegramUser) {
+          const profileKey = buildTelegramProfileKey(effectiveTelegramUser.id);
           const existingProfile = profiles[profileKey];
 
           if (existingProfile) {
-            const syncedProfile = mergeWithTelegramData(existingProfile, telegramUser);
+            const syncedProfile = mergeWithTelegramData(existingProfile, effectiveTelegramUser);
             set({
               user: null,
               profiles: {
@@ -169,7 +173,7 @@ export const useUserStore = create<UserStore>()(
               isInitialized: true,
               needsProfileSetup: true,
               authMode: 'login',
-              pendingTelegramUser: telegramUser,
+              pendingTelegramUser: effectiveTelegramUser,
               pendingProfileKey: profileKey
             });
             return;
@@ -180,9 +184,9 @@ export const useUserStore = create<UserStore>()(
             activeProfileKey: null,
             isInitialized: true,
             needsProfileSetup: true,
-            authMode: telegramUser.username ? 'register' : null,
-            pendingTelegramUser: telegramUser,
-            pendingProfileKey: telegramUser.username ? profileKey : null
+            authMode: effectiveTelegramUser.username ? 'register' : null,
+            pendingTelegramUser: effectiveTelegramUser,
+            pendingProfileKey: effectiveTelegramUser.username ? profileKey : null
           });
           return;
         }
@@ -192,9 +196,9 @@ export const useUserStore = create<UserStore>()(
           activeProfileKey: null,
           isInitialized: true,
           needsProfileSetup: true,
-          authMode: null,
-          pendingTelegramUser: null,
-          pendingProfileKey: null
+          authMode: manualTelegramUser?.username ? 'register' : null,
+          pendingTelegramUser: manualTelegramUser,
+          pendingProfileKey: manualTelegramUser?.username ? buildTelegramProfileKey(manualTelegramUser.id) : null
         });
       },
       registerWithPassword: async ({ password }) => {

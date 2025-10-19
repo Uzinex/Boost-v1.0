@@ -1,47 +1,31 @@
-export interface TelegramWebAppUser {
-  id: number;
-  first_name?: string;
-  last_name?: string;
-  username?: string;
-  photo_url?: string;
-}
-
-export interface TelegramWebApp {
-  initDataUnsafe?: {
-    user?: TelegramWebAppUser;
-    start_param?: string;
-  };
-  ready?: () => void;
-  expand?: () => void;
-  colorScheme?: 'light' | 'dark';
-  openTelegramLink?: (url: string) => void;
-}
+import type { TelegramWebApp, TelegramWebAppUser, TelegramWindow } from '../types/telegram';
+import { resolveManualTelegramUser } from './environment';
 
 declare global {
-  interface Window {
-    Telegram?: {
-      WebApp?: TelegramWebApp;
-    };
-  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-interface
+  interface Window extends TelegramWindow {}
 }
+
+const getWebApp = (): TelegramWebApp | undefined => {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  return window.Telegram?.WebApp;
+};
 
 export const getTelegramUser = (): TelegramWebAppUser | null => {
   if (typeof window === 'undefined') {
-    return null;
+    return resolveManualTelegramUser();
   }
 
-  const webApp = window.Telegram?.WebApp;
+  const webApp = getWebApp();
 
-  if (webApp?.ready) {
-    webApp.ready();
-  }
-
-  if (webApp?.expand) {
-    webApp.expand();
-  }
+  webApp?.ready?.();
+  webApp?.expand?.();
 
   const user = webApp?.initDataUnsafe?.user;
-  return user ?? null;
+  return user ?? resolveManualTelegramUser();
 };
 
 export const launchedFromStartCommand = (): boolean => {
@@ -49,8 +33,24 @@ export const launchedFromStartCommand = (): boolean => {
     return false;
   }
 
-  const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
-  return typeof startParam !== 'undefined';
+  const webApp = getWebApp();
+  if (typeof webApp?.initDataUnsafe?.start_param !== 'undefined') {
+    return true;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('start_param')) {
+    return true;
+  }
+
+  if (window.location.hash) {
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    if (hashParams.has('start_param')) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 export const openTelegramLink = (url: string) => {
@@ -58,7 +58,7 @@ export const openTelegramLink = (url: string) => {
     return;
   }
 
-  const webApp = window.Telegram?.WebApp;
+  const webApp = getWebApp();
   const target = url.trim();
 
   const { webUrl, deepLink } = (() => {
