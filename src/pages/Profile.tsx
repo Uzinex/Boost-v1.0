@@ -7,6 +7,7 @@ import { openTelegramLink } from '../utils/telegram';
 
 const ProfilePage = () => {
   const user = useUserStore(state => state.user);
+  const logout = useUserStore(state => state.logout);
 
   if (!user) {
     return null;
@@ -55,13 +56,18 @@ const ProfilePage = () => {
           Для пополнения напишите администратору <strong>@feruzdilov</strong>. Укажите желаемую сумму и ваш логин, а также
           предоставьте боту права администратора в продвигаемом канале или группе для корректного учёта подписок.
         </p>
-        <Button
-          type="button"
-          style={{ marginTop: '16px', alignSelf: 'flex-start', display: 'inline-flex' }}
-          onClick={() => openTelegramLink('@feruzdilov')}
-        >
-          Написать администратору
-        </Button>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', marginTop: '16px' }}>
+          <Button type="button" onClick={() => openTelegramLink('https://t.me/feruzdilov')}>
+            Написать администратору
+          </Button>
+          <Button
+            type="button"
+            onClick={logout}
+            style={{ background: '#f3f4f6', color: '#1f2937', borderColor: '#d1d5db' }}
+          >
+            Выйти из аккаунта
+          </Button>
+        </div>
       </Card>
 
       <Card title="Тарифы на пополнение">

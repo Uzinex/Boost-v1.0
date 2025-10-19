@@ -9,6 +9,7 @@ export interface TelegramWebAppUser {
 export interface TelegramWebApp {
   initDataUnsafe?: {
     user?: TelegramWebAppUser;
+    start_param?: string;
   };
   ready?: () => void;
   expand?: () => void;
@@ -41,6 +42,15 @@ export const getTelegramUser = (): TelegramWebAppUser | null => {
 
   const user = webApp?.initDataUnsafe?.user;
   return user ?? null;
+};
+
+export const launchedFromStartCommand = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param;
+  return typeof startParam !== 'undefined';
 };
 
 export const openTelegramLink = (url: string) => {

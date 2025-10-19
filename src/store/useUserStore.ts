@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware';
 import { INITIAL_BALANCE, REFERRAL_PERCENTAGE } from '../utils/constants';
 import type { TelegramWebAppUser } from '../utils/telegram';
 import { useBalanceStore } from './useBalanceStore';
+import { hashPassword } from '../utils/security';
 
 export interface UserProfile {
   id: string;
@@ -24,6 +25,7 @@ export interface UserProfile {
   referralEarnings: number;
   referralCode: string;
   createdAt: string;
+  passwordHash: string;
   referrer?: {
     id: string;
     fullName: string;
@@ -31,14 +33,21 @@ export interface UserProfile {
   };
 }
 
+type AuthMode = 'login' | 'register';
+
 interface UserStore {
   user: UserProfile | null;
   profiles: Record<string, UserProfile>;
   activeProfileKey: string | null;
   isInitialized: boolean;
   needsProfileSetup: boolean;
+  authMode: AuthMode | null;
+  pendingTelegramUser: TelegramWebAppUser | null;
+  pendingProfileKey: string | null;
   initialize: (telegramUser?: TelegramWebAppUser | null) => void;
-  completeRegistration: (payload: { fullName: string; username?: string }) => void;
+  registerWithPassword: (payload: { password: string }) => Promise<void>;
+  loginWithPassword: (payload: { password: string }) => Promise<void>;
+  logout: () => void;
   adjustBalance: (amount: number) => void;
   recordOrder: (spentAmount: number) => void;
   recordTaskCompletion: (rewardAmount: number) => number;
@@ -46,12 +55,30 @@ interface UserStore {
   addReferralEarnings: (amount: number) => void;
   setReferrer: (fullName: string) => void;
   incrementReferrals: () => void;
-  reset: () => void;
 }
 
-const MANUAL_PROFILE_KEY = 'manual-profile';
-
 const buildTelegramProfileKey = (telegramId: number) => `telegram-${telegramId}`;
+
+const sanitizeUsername = (username?: string | null) => username?.replace(/^@+/, '').trim() || undefined;
+
+const normalizeUsername = (username?: string | null) => sanitizeUsername(username)?.toLowerCase();
+
+const fullNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string => {
+  if (!telegramUser) {
+    return '';
+  }
+
+  const firstName = telegramUser.first_name ?? '';
+  const lastName = telegramUser.last_name ?? '';
+  const full = `${firstName} ${lastName}`.trim();
+  return full || telegramUser.username || '';
+};
+
+const firstNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string | undefined =>
+  telegramUser?.first_name ?? telegramUser?.username ?? undefined;
+
+const buildAvatarUrl = (seed?: string) =>
+  `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(seed || 'boost-user')}`;
 
 const withUpdatedActiveProfile = (
   state: UserStore,
@@ -72,29 +99,33 @@ const withUpdatedActiveProfile = (
   };
 };
 
-const fullNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string => {
+const mergeWithTelegramData = (profile: UserProfile, telegramUser?: TelegramWebAppUser | null): UserProfile => {
   if (!telegramUser) {
-    return '';
+    return profile;
   }
 
-  const firstName = telegramUser.first_name ?? '';
-  const lastName = telegramUser.last_name ?? '';
-  const full = `${firstName} ${lastName}`.trim();
-  return full || telegramUser.username || '';
+  const username = sanitizeUsername(telegramUser.username) ?? profile.username;
+
+  return {
+    ...profile,
+    telegramId: telegramUser.id,
+    firstName: firstNameFromTelegram(telegramUser) ?? profile.firstName,
+    lastName: telegramUser.last_name ?? profile.lastName,
+    fullName: fullNameFromTelegram(telegramUser) || profile.fullName,
+    username,
+    avatarUrl: telegramUser.photo_url ?? profile.avatarUrl ?? buildAvatarUrl(username)
+  };
 };
 
-const firstNameFromTelegram = (telegramUser?: TelegramWebAppUser | null): string | undefined =>
-  telegramUser?.first_name ?? telegramUser?.username ?? undefined;
-
-const buildAvatarUrl = (seed?: string) =>
-  `https://api.dicebear.com/7.x/thumbs/svg?seed=${encodeURIComponent(seed || 'boost-user')}`;
-
 const baseState = {
-  user: null,
-  profiles: {},
-  activeProfileKey: null,
+  user: null as UserProfile | null,
+  profiles: {} as Record<string, UserProfile>,
+  activeProfileKey: null as string | null,
   isInitialized: false,
-  needsProfileSetup: false
+  needsProfileSetup: false,
+  authMode: null as AuthMode | null,
+  pendingTelegramUser: null as TelegramWebAppUser | null,
+  pendingProfileKey: null as string | null
 };
 
 export const useUserStore = create<UserStore>()(
@@ -102,130 +133,89 @@ export const useUserStore = create<UserStore>()(
     (set, get) => ({
       ...baseState,
       initialize: (telegramUser = null) => {
-        const { profiles, activeProfileKey } = get();
+        const state = get();
+        const { user, activeProfileKey, profiles } = state;
 
-        if (telegramUser) {
-          const profileKey = buildTelegramProfileKey(telegramUser.id);
-          const existingProfile = profiles[profileKey];
-
-          const telegramData = {
-            telegramId: telegramUser.id,
-            firstName:
-              firstNameFromTelegram(telegramUser) ?? existingProfile?.firstName ?? 'Boost',
-            lastName: telegramUser.last_name ?? existingProfile?.lastName,
-            fullName:
-              fullNameFromTelegram(telegramUser) || existingProfile?.fullName || 'Boost Пользователь',
-            username: telegramUser.username ?? existingProfile?.username,
-            avatarUrl:
-              telegramUser.photo_url ??
-              existingProfile?.avatarUrl ??
-              buildAvatarUrl(telegramUser.username ?? telegramUser.first_name ?? 'boost-user')
-          };
-
-          if (existingProfile) {
-            const updatedProfile: UserProfile = {
-              ...existingProfile,
-              ...telegramData
-            };
-
-            useBalanceStore.getState().setActiveUser(updatedProfile.id);
-            set(state => ({
-              user: updatedProfile,
-              profiles: {
-                ...state.profiles,
-                [profileKey]: updatedProfile
-              },
-              activeProfileKey: profileKey,
-              isInitialized: true,
-              needsProfileSetup: false
-            }));
-            return;
-          }
-
-          const referralCode = crypto.randomUUID().split('-')[0];
-          const baseFirstName = telegramData.firstName ?? 'Boost';
-
-          const newUser: UserProfile = {
-            id: crypto.randomUUID(),
-            balance: INITIAL_BALANCE,
-            lifetimeEarned: 0,
-            lifetimeSpent: 0,
-            ordersPlaced: 0,
-            tasksCompleted: 0,
-            totalTopUps: 0,
-            totalTopUpAmount: 0,
-            referralsCount: 0,
-            referralEarnings: 0,
-            referralCode,
-            createdAt: new Date().toISOString(),
-            firstName: baseFirstName,
-            lastName: telegramData.lastName,
-            fullName: telegramData.fullName || baseFirstName,
-            username: telegramData.username,
-            telegramId: telegramData.telegramId,
-            avatarUrl: telegramData.avatarUrl ?? buildAvatarUrl(baseFirstName),
-            referrer: undefined
-          };
-
-          useBalanceStore.getState().setActiveUser(newUser.id);
-          set(state => ({
-            user: newUser,
-            profiles: {
-              ...state.profiles,
-              [profileKey]: newUser
-            },
-            activeProfileKey: profileKey,
-            isInitialized: true,
-            needsProfileSetup: false
-          }));
-
-          useBalanceStore.getState().logEvent(newUser.id, {
-            type: 'topup',
-            amount: INITIAL_BALANCE,
-            description: 'Начислен стартовый баланс'
-          });
-          return;
-        }
-
-        if (activeProfileKey && profiles[activeProfileKey]) {
-          const activeProfile = profiles[activeProfileKey];
-          useBalanceStore.getState().setActiveUser(activeProfile.id);
+        if (user && activeProfileKey) {
+          const updatedUser = telegramUser?.id === user.telegramId ? mergeWithTelegramData(user, telegramUser) : user;
+          useBalanceStore.getState().setActiveUser(updatedUser.id);
           set({
-            user: activeProfile,
+            user: updatedUser,
+            profiles: updatedUser === user ? profiles : { ...profiles, [activeProfileKey]: updatedUser },
             isInitialized: true,
-            needsProfileSetup: false
-          });
-          return;
-        }
-
-        const manualProfile = profiles[MANUAL_PROFILE_KEY];
-        if (manualProfile) {
-          useBalanceStore.getState().setActiveUser(manualProfile.id);
-          set({
-            user: manualProfile,
-            activeProfileKey: MANUAL_PROFILE_KEY,
-            isInitialized: true,
-            needsProfileSetup: false
+            needsProfileSetup: false,
+            authMode: null,
+            pendingTelegramUser: null,
+            pendingProfileKey: null
           });
           return;
         }
 
         useBalanceStore.getState().setActiveUser(null);
-        set({ user: null, isInitialized: true, needsProfileSetup: true });
-      },
-      completeRegistration: payload => {
-        const trimmedName = payload.fullName.trim();
-        if (!trimmedName) {
-          throw new Error('Укажите имя и фамилию');
+
+        if (telegramUser) {
+          const profileKey = buildTelegramProfileKey(telegramUser.id);
+          const existingProfile = profiles[profileKey];
+
+          if (existingProfile) {
+            const syncedProfile = mergeWithTelegramData(existingProfile, telegramUser);
+            set({
+              user: null,
+              profiles: {
+                ...profiles,
+                [profileKey]: syncedProfile
+              },
+              activeProfileKey: null,
+              isInitialized: true,
+              needsProfileSetup: true,
+              authMode: 'login',
+              pendingTelegramUser: telegramUser,
+              pendingProfileKey: profileKey
+            });
+            return;
+          }
+
+          set({
+            user: null,
+            activeProfileKey: null,
+            isInitialized: true,
+            needsProfileSetup: true,
+            authMode: telegramUser.username ? 'register' : null,
+            pendingTelegramUser: telegramUser,
+            pendingProfileKey: telegramUser.username ? profileKey : null
+          });
+          return;
         }
 
-        const nameParts = trimmedName.split(/\s+/);
-        const firstName = nameParts[0] ?? trimmedName;
-        const lastName = nameParts.slice(1).join(' ') || undefined;
-        const normalizedUsername = payload.username
-          ? payload.username.replace(/^@+/, '').trim() || undefined
-          : undefined;
+        set({
+          user: null,
+          activeProfileKey: null,
+          isInitialized: true,
+          needsProfileSetup: true,
+          authMode: null,
+          pendingTelegramUser: null,
+          pendingProfileKey: null
+        });
+      },
+      registerWithPassword: async ({ password }) => {
+        const { pendingProfileKey, pendingTelegramUser } = get();
+
+        if (!pendingProfileKey || !pendingTelegramUser) {
+          throw new Error('Регистрация недоступна. Перезапустите приложение.');
+        }
+
+        const telegramUsernameRaw = sanitizeUsername(pendingTelegramUser.username);
+        if (!telegramUsernameRaw) {
+          throw new Error('У вашего Telegram аккаунта отсутствует имя пользователя.');
+        }
+
+        if (!password || password.length < 6) {
+          throw new Error('Пароль должен содержать не менее 6 символов.');
+        }
+
+        const passwordHash = await hashPassword(password);
         const referralCode = crypto.randomUUID().split('-')[0];
+        const baseFirstName = firstNameFromTelegram(pendingTelegramUser) ?? 'Boost';
 
         const newUser: UserProfile = {
           id: crypto.randomUUID(),
@@ -240,31 +230,104 @@ export const useUserStore = create<UserStore>()(
           referralEarnings: 0,
           referralCode,
           createdAt: new Date().toISOString(),
-          firstName,
-          lastName,
-          fullName: trimmedName,
-          username: normalizedUsername,
-          avatarUrl: buildAvatarUrl(normalizedUsername || trimmedName),
-          telegramId: undefined,
+          firstName: baseFirstName,
+          lastName: pendingTelegramUser.last_name ?? undefined,
+          fullName: fullNameFromTelegram(pendingTelegramUser) || baseFirstName,
+          username: telegramUsernameRaw,
+          telegramId: pendingTelegramUser.id,
+          avatarUrl:
+            pendingTelegramUser.photo_url ??
+            buildAvatarUrl(pendingTelegramUser.username ?? pendingTelegramUser.first_name ?? 'boost-user'),
+          passwordHash,
           referrer: undefined
         };
 
         useBalanceStore.getState().setActiveUser(newUser.id);
+
         set(state => ({
           user: newUser,
           profiles: {
             ...state.profiles,
-            [MANUAL_PROFILE_KEY]: newUser
+            [pendingProfileKey]: newUser
           },
-          activeProfileKey: MANUAL_PROFILE_KEY,
+          activeProfileKey: pendingProfileKey,
           isInitialized: true,
-          needsProfileSetup: false
+          needsProfileSetup: false,
+          authMode: null,
+          pendingTelegramUser: null,
+          pendingProfileKey: null
         }));
 
         useBalanceStore.getState().logEvent(newUser.id, {
           type: 'topup',
           amount: INITIAL_BALANCE,
           description: 'Начислен стартовый баланс'
+        });
+      },
+      loginWithPassword: async ({ password }) => {
+        const { pendingProfileKey, pendingTelegramUser, profiles } = get();
+        if (!pendingProfileKey) {
+          throw new Error('Профиль не найден.');
+        }
+
+        const storedProfile = profiles[pendingProfileKey];
+        if (!storedProfile) {
+          throw new Error('Профиль не найден.');
+        }
+
+        if (!password) {
+          throw new Error('Введите пароль.');
+        }
+
+        const passwordHash = await hashPassword(password);
+        if (passwordHash !== storedProfile.passwordHash) {
+          throw new Error('Неверный пароль.');
+        }
+
+        const updatedProfile = mergeWithTelegramData(storedProfile, pendingTelegramUser);
+
+        useBalanceStore.getState().setActiveUser(updatedProfile.id);
+
+        set(state => ({
+          user: updatedProfile,
+          profiles: {
+            ...state.profiles,
+            [pendingProfileKey]: updatedProfile
+          },
+          activeProfileKey: pendingProfileKey,
+          isInitialized: true,
+          needsProfileSetup: false,
+          authMode: null,
+          pendingTelegramUser: null,
+          pendingProfileKey: null
+        }));
+      },
+      logout: () => {
+        const currentUser = get().user;
+        useBalanceStore.getState().setActiveUser(null);
+
+        if (currentUser?.telegramId) {
+          const profileKey = buildTelegramProfileKey(currentUser.telegramId);
+          set(state => ({
+            user: null,
+            activeProfileKey: null,
+            isInitialized: true,
+            needsProfileSetup: true,
+            authMode: 'login',
+            pendingTelegramUser: null,
+            pendingProfileKey: state.profiles[profileKey] ? profileKey : null
+          }));
+          return;
+        }
+
+        set({
+          user: null,
+          activeProfileKey: null,
+          isInitialized: true,
+          needsProfileSetup: true,
+          authMode: null,
+          pendingTelegramUser: null,
+          pendingProfileKey: null
         });
       },
       adjustBalance: amount =>
@@ -280,9 +343,7 @@ export const useUserStore = create<UserStore>()(
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
-          const referralEarnings = state.user.referrer
-            ? spentAmount * state.user.referrer.commissionRate
-            : 0;
+          const referralEarnings = state.user.referrer ? spentAmount * state.user.referrer.commissionRate : 0;
 
           return withUpdatedActiveProfile(state, current => ({
             ...current,
@@ -356,29 +417,11 @@ export const useUserStore = create<UserStore>()(
             ...current,
             referralsCount: current.referralsCount + 1
           }));
-        }),
-      reset: () => {
-        useBalanceStore.getState().setActiveUser(null);
-        set(state => {
-          if (!state.activeProfileKey) {
-            return {
-              ...baseState,
-              profiles: state.profiles
-            };
-          }
-
-          const { [state.activeProfileKey]: _removed, ...restProfiles } = state.profiles;
-
-          return {
-            ...baseState,
-            profiles: restProfiles
-          };
-        });
-      }
+        })
     }),
     {
       name: 'boost-user-store',
-      version: 2,
+      version: 3,
       migrate: () => ({
         ...baseState,
         needsProfileSetup: true
