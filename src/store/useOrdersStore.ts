@@ -70,13 +70,20 @@ export const useOrdersStore = create<OrdersStore>((set, get) => ({
       description: `Создан заказ (${payload.type === 'channel' ? 'канал' : 'группа'}) на ${requestedCount} подписчиков`
     });
 
-    useToastStore
-      .getState()
-      .push({
-        type: 'success',
-        title: 'Заказ опубликован',
-        description: `Списано ${totalBudget.toFixed(1)} UZT`
+    const toastStore = useToastStore.getState();
+    toastStore.push({
+      type: 'success',
+      title: 'Заказ опубликован',
+      description: `Списано ${totalBudget.toFixed(1)} UZT`
+    });
+
+    if (!data.order.botIsAdmin) {
+      toastStore.push({
+        type: 'warning',
+        title: 'Проверьте права бота',
+        description: 'Не удалось подтвердить права бота. Проверьте, что бот добавлен в администраторы.'
       });
+    }
 
     return data.order;
   },

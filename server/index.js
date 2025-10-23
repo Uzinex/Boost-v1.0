@@ -331,11 +331,19 @@ app.post('/api/orders', async (req, res, next) => {
     const user = userResult.rows[0].data;
     const identifier = parseChatIdentifier(payload.payload.link);
 
+    let botIsAdmin = false;
     if (!telegramToken) {
-      throw new Error('TELEGRAM_BOT_TOKEN не настроен. Невозможно проверить права бота.');
+      console.warn(
+        '[orders] TELEGRAM_BOT_TOKEN не задан. Проверка прав бота будет пропущена, заказ помечен как требующий проверки.'
+      );
+    } else {
+      try {
+        await ensureBotHasAccess(identifier);
+        botIsAdmin = true;
+      } catch (error) {
+        console.error('[orders] Не удалось подтвердить права бота:', error);
+      }
     }
-
-    await ensureBotHasAccess(identifier);
 
     const type = payload.payload.type;
     const requestedCount = Math.max(10, payload.payload.requestedCount);
@@ -376,7 +384,7 @@ app.post('/api/orders', async (req, res, next) => {
       totalBudget,
       status: 'active',
       createdAt,
-      botIsAdmin: true
+      botIsAdmin
     };
 
     await pool.query('UPDATE user_profiles SET data = $2, telegram_id = $3, updated_at = NOW() WHERE id = $1', [
