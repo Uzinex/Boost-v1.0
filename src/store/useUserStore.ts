@@ -3,36 +3,11 @@ import { persist } from 'zustand/middleware';
 
 import { INITIAL_BALANCE, REFERRAL_PERCENTAGE } from '../utils/constants';
 import type { TelegramWebAppUser } from '../types/telegram';
+import type { UserProfile } from '../types/models';
 import { useBalanceStore } from './useBalanceStore';
 import { hashPassword } from '../utils/security';
 import { environment, resolveManualTelegramUser } from '../utils/environment';
-
-export interface UserProfile {
-  id: string;
-  telegramId?: number;
-  firstName: string;
-  lastName?: string;
-  fullName: string;
-  username?: string;
-  avatarUrl?: string;
-  balance: number;
-  lifetimeEarned: number;
-  lifetimeSpent: number;
-  ordersPlaced: number;
-  tasksCompleted: number;
-  totalTopUps: number;
-  totalTopUpAmount: number;
-  referralsCount: number;
-  referralEarnings: number;
-  referralCode: string;
-  createdAt: string;
-  passwordHash: string;
-  referrer?: {
-    id: string;
-    fullName: string;
-    commissionRate: number;
-  };
-}
+import { fetchUserProfile, syncUserProfile } from '../utils/api';
 
 type AuthMode = 'login' | 'register';
 
@@ -49,9 +24,9 @@ interface UserStore {
   registerWithPassword: (payload: { password: string; username?: string; fullName?: string }) => Promise<void>;
   loginWithPassword: (payload: { password: string }) => Promise<void>;
   logout: () => void;
+  setUserFromServer: (profile: UserProfile) => void;
+  syncProfile: () => Promise<void>;
   adjustBalance: (amount: number) => void;
-  recordOrder: (spentAmount: number) => void;
-  recordTaskCompletion: (rewardAmount: number) => number;
   recordTopUp: (amount: number) => void;
   addReferralEarnings: (amount: number) => void;
   setReferrer: (fullName: string) => void;
@@ -154,6 +129,34 @@ export const useUserStore = create<UserStore>()(
             pendingTelegramUser: null,
             pendingProfileKey: null
           });
+          void (async () => {
+            try {
+              const remoteProfile = await fetchUserProfile(updatedUser.id);
+              if (remoteProfile) {
+                const merged = effectiveTelegramUser?.id
+                  ? mergeWithTelegramData(remoteProfile, effectiveTelegramUser)
+                  : remoteProfile;
+                set(current => {
+                  if (!current.activeProfileKey) {
+                    return current;
+                  }
+
+                  return {
+                    ...current,
+                    user: merged,
+                    profiles: {
+                      ...current.profiles,
+                      [current.activeProfileKey]: merged
+                    }
+                  };
+                });
+              } else {
+                await syncUserProfile(updatedUser);
+              }
+            } catch (error) {
+              console.error('[user] Failed to refresh profile from server', error);
+            }
+          })();
           return;
         }
 
@@ -251,6 +254,8 @@ export const useUserStore = create<UserStore>()(
             referrer: undefined
           };
 
+          await syncUserProfile(newUser);
+
           useBalanceStore.getState().setActiveUser(newUser.id);
 
           set(state => ({
@@ -307,6 +312,8 @@ export const useUserStore = create<UserStore>()(
           referrer: undefined
         };
 
+        await syncUserProfile(newUser);
+
         useBalanceStore.getState().setActiveUser(newUser.id);
 
         set(state => ({
@@ -349,7 +356,18 @@ export const useUserStore = create<UserStore>()(
           throw new Error('Неверный пароль.');
         }
 
-        const updatedProfile = mergeWithTelegramData(storedProfile, pendingTelegramUser);
+        let updatedProfile = mergeWithTelegramData(storedProfile, pendingTelegramUser);
+
+        try {
+          const remoteProfile = await fetchUserProfile(updatedProfile.id);
+          if (remoteProfile) {
+            updatedProfile = mergeWithTelegramData(remoteProfile, pendingTelegramUser);
+          } else {
+            await syncUserProfile(updatedProfile);
+          }
+        } catch (error) {
+          console.error('[user] Failed to synchronize profile during login', error);
+        }
 
         useBalanceStore.getState().setActiveUser(updatedProfile.id);
 
@@ -398,7 +416,37 @@ export const useUserStore = create<UserStore>()(
           pendingProfileKey: MANUAL_PROFILE_KEY
         });
       },
-      adjustBalance: amount =>
+      setUserFromServer: profile => {
+        useBalanceStore.getState().setActiveUser(profile.id);
+
+        set(state => {
+          if (!state.activeProfileKey) {
+            return state;
+          }
+
+          return {
+            ...state,
+            user: profile,
+            profiles: {
+              ...state.profiles,
+              [state.activeProfileKey]: profile
+            }
+          };
+        });
+      },
+      syncProfile: async () => {
+        const current = get().user;
+        if (!current) {
+          return;
+        }
+
+        try {
+          await syncUserProfile(current);
+        } catch (error) {
+          console.error('[user] Failed to sync profile', error);
+        }
+      },
+      adjustBalance: amount => {
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
@@ -406,38 +454,10 @@ export const useUserStore = create<UserStore>()(
             ...current,
             balance: Math.max(0, current.balance + amount)
           }));
-        }),
-      recordOrder: spentAmount =>
-        set(state => {
-          if (!state.user || !state.activeProfileKey) return state;
-
-          const referralEarnings = state.user.referrer ? spentAmount * state.user.referrer.commissionRate : 0;
-
-          return withUpdatedActiveProfile(state, current => ({
-            ...current,
-            balance: Math.max(0, current.balance - spentAmount),
-            lifetimeSpent: current.lifetimeSpent + spentAmount,
-            ordersPlaced: current.ordersPlaced + 1,
-            referralEarnings: current.referralEarnings + referralEarnings
-          }));
-        }),
-      recordTaskCompletion: rewardAmount => {
-        let referralCommission = 0;
-        set(state => {
-          if (!state.user || !state.activeProfileKey) return state;
-
-          referralCommission = state.user.referrer ? rewardAmount * REFERRAL_PERCENTAGE : 0;
-
-          return withUpdatedActiveProfile(state, current => ({
-            ...current,
-            balance: current.balance + rewardAmount,
-            lifetimeEarned: current.lifetimeEarned + rewardAmount,
-            tasksCompleted: current.tasksCompleted + 1
-          }));
         });
-        return referralCommission;
+        void get().syncProfile();
       },
-      recordTopUp: amount =>
+      recordTopUp: amount => {
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
@@ -453,8 +473,10 @@ export const useUserStore = create<UserStore>()(
             totalTopUps: current.totalTopUps + 1,
             totalTopUpAmount: current.totalTopUpAmount + amount
           }));
-        }),
-      addReferralEarnings: amount =>
+        });
+        void get().syncProfile();
+      },
+      addReferralEarnings: amount => {
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
@@ -463,8 +485,10 @@ export const useUserStore = create<UserStore>()(
             balance: current.balance + amount,
             referralEarnings: current.referralEarnings + amount
           }));
-        }),
-      setReferrer: fullName =>
+        });
+        void get().syncProfile();
+      },
+      setReferrer: fullName => {
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
@@ -476,8 +500,10 @@ export const useUserStore = create<UserStore>()(
               commissionRate: REFERRAL_PERCENTAGE
             }
           }));
-        }),
-      incrementReferrals: () =>
+        });
+        void get().syncProfile();
+      },
+      incrementReferrals: () => {
         set(state => {
           if (!state.user || !state.activeProfileKey) return state;
 
@@ -485,7 +511,9 @@ export const useUserStore = create<UserStore>()(
             ...current,
             referralsCount: current.referralsCount + 1
           }));
-        })
+        });
+        void get().syncProfile();
+      }
     }),
     {
       name: 'boost-user-store',

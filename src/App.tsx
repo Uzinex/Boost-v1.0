@@ -14,12 +14,18 @@ import { useUserStore } from './store/useUserStore';
 import { getTelegramUser, launchedFromStartCommand } from './utils/telegram';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { useToastStore } from './store/useToastStore';
+import { useOrdersStore } from './store/useOrdersStore';
+import { useTasksStore } from './store/useTasksStore';
 
 const App = () => {
   const initialize = useUserStore(state => state.initialize);
   const isInitialized = useUserStore(state => state.isInitialized);
   const needsProfileSetup = useUserStore(state => state.needsProfileSetup);
+  const user = useUserStore(state => state.user);
   const pushToast = useToastStore(state => state.push);
+  const loadOrders = useOrdersStore(state => state.loadOrders);
+  const hasLoadedOrders = useOrdersStore(state => state.hasLoaded);
+  const loadTaskCompletions = useTasksStore(state => state.loadForUser);
 
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [welcomeShown, setWelcomeShown] = useState(false);
@@ -45,6 +51,34 @@ const App = () => {
 
     setWelcomeShown(true);
   }, [isInitialized, needsProfileSetup, welcomeShown, pushToast]);
+
+  useEffect(() => {
+    if (!isInitialized || needsProfileSetup || !user) {
+      return;
+    }
+
+    if (!hasLoadedOrders) {
+      void loadOrders().catch(error => {
+        console.error('[app] Failed to load orders', error);
+      });
+    }
+
+    void loadTaskCompletions(user.id);
+  }, [isInitialized, needsProfileSetup, user, hasLoadedOrders, loadOrders, loadTaskCompletions]);
+
+  useEffect(() => {
+    if (!isInitialized || needsProfileSetup || !user) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadOrders(true).catch(error => {
+        console.error('[app] Failed to refresh orders', error);
+      });
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [isInitialized, needsProfileSetup, user, loadOrders]);
 
   if (!isInitialized) {
     return <Loader label="Загружаем данные профиля" />;
