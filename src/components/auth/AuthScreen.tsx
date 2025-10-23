@@ -14,31 +14,43 @@ const RegistrationForm = () => {
   const pushToast = useToastStore(state => state.push);
 
   const [username, setUsername] = useState('');
+  const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setSubmitting] = useState(false);
 
   const displayUsername = telegramUser?.username?.replace(/^@+/, '').trim() ?? '';
   const expectedUsername = normalizeUsername(telegramUser?.username ?? '');
-
-  if (!telegramUser) {
-    return null;
-  }
+  const isManualMode = !telegramUser;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!expectedUsername) {
-      pushToast({ type: 'error', title: 'Укажите username', description: 'В Telegram должен быть установлен @username' });
-      return;
-    }
-
     const normalizedInput = normalizeUsername(username);
-    if (!normalizedInput || normalizedInput !== expectedUsername) {
+
+    if (!isManualMode) {
+      if (!expectedUsername) {
+        pushToast({
+          type: 'error',
+          title: 'Укажите username',
+          description: 'В Telegram должен быть установлен @username'
+        });
+        return;
+      }
+
+      if (!normalizedInput || normalizedInput !== expectedUsername) {
+        pushToast({
+          type: 'error',
+          title: 'Неверный логин',
+          description: 'Введите ваш Telegram @username без ошибок'
+        });
+        return;
+      }
+    } else if (!normalizedInput) {
       pushToast({
         type: 'error',
-        title: 'Неверный логин',
-        description: 'Введите ваш Telegram @username без ошибок'
+        title: 'Укажите логин',
+        description: 'Введите желаемый @username для профиля'
       });
       return;
     }
@@ -59,7 +71,11 @@ const RegistrationForm = () => {
 
     setSubmitting(true);
     try {
-      await registerWithPassword({ password });
+      if (isManualMode) {
+        await registerWithPassword({ password, username: normalizedInput, fullName });
+      } else {
+        await registerWithPassword({ password });
+      }
       pushToast({ type: 'success', title: 'Профиль создан', description: 'Добро пожаловать в Boost!' });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось завершить регистрацию';
@@ -73,19 +89,42 @@ const RegistrationForm = () => {
     <Card className="registration-card" title="Создание профиля">
       <form onSubmit={handleSubmit} className="grid" style={{ gap: '16px' }}>
         <p style={{ color: '#4b5563', fontSize: '0.95rem', lineHeight: 1.5 }}>
-          Мы обнаружили ваш Telegram аккаунт <strong>@{displayUsername || expectedUsername}</strong>. Для защиты профиля
-          установите пароль и
-          подтвердите свой логин. Один Telegram-аккаунт соответствует одному профилю в Boost.
+          {isManualMode ? (
+            <>
+              Создайте локальный профиль Boost. Придумайте логин, укажите желаемое имя и задайте пароль для защиты
+              аккаунта.
+            </>
+          ) : (
+            <>
+              Мы обнаружили ваш Telegram аккаунт <strong>@{displayUsername || expectedUsername}</strong>. Для защиты
+              профиля установите пароль и подтвердите свой логин. Один Telegram-аккаунт соответствует одному профилю в Boost.
+            </>
+          )}
         </p>
+        {!isManualMode && !expectedUsername && (
+          <p style={{ color: '#ef4444', fontSize: '0.9rem', lineHeight: 1.5 }}>
+            В Telegram нужно задать публичный @username. После этого перезапустите приложение командой <strong>/start</strong>.
+          </p>
+        )}
         <Input
           id="username"
-          label="Подтвердите ваш Telegram @username"
+          label={isManualMode ? 'Придумайте @username' : 'Подтвердите ваш Telegram @username'}
           placeholder="@username"
           value={username}
           onChange={event => setUsername(event.target.value)}
           autoComplete="username"
           required
         />
+        {isManualMode && (
+          <Input
+            id="fullName"
+            label="Имя и фамилия"
+            placeholder="Как к вам обращаться"
+            value={fullName}
+            onChange={event => setFullName(event.target.value)}
+            autoComplete="name"
+          />
+        )}
         <Input
           id="password"
           type="password"
@@ -169,45 +208,12 @@ const LoginForm = () => {
 
 export const AuthScreen = () => {
   const authMode = useUserStore(state => state.authMode);
-  const pendingTelegramUser = useUserStore(state => state.pendingTelegramUser);
 
-  if (authMode === 'register') {
-    return (
-      <div className="registration-screen">
-        <RegistrationForm />
-      </div>
-    );
-  }
-
-  if (authMode === 'login') {
-    return (
-      <div className="registration-screen">
-        <LoginForm />
-      </div>
-    );
-  }
-
-  if (pendingTelegramUser && !pendingTelegramUser.username) {
-    return (
-      <div className="registration-screen">
-        <Card className="registration-card" title="Требуется имя пользователя">
-          <p style={{ color: '#4b5563', fontSize: '0.95rem', lineHeight: 1.6 }}>
-            Чтобы продолжить, задайте @username в настройках Telegram и перезапустите веб-приложение командой
-            <strong> /start</strong> в чате с ботом. Это необходимо для привязки профиля и защиты аккаунта паролем.
-          </p>
-        </Card>
-      </div>
-    );
-  }
+  const mode = authMode ?? 'register';
 
   return (
     <div className="registration-screen">
-      <Card className="registration-card" title="Недоступно">
-        <p style={{ color: '#4b5563', fontSize: '0.95rem', lineHeight: 1.6 }}>
-          Не удалось получить данные аккаунта Telegram. Перезапустите приложение через команду <strong>/start</strong> и
-          предоставьте доступ к данным профиля.
-        </p>
-      </Card>
+      {mode === 'login' ? <LoginForm /> : <RegistrationForm />}
     </div>
   );
 };
