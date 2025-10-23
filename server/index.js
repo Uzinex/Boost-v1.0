@@ -4,6 +4,9 @@ import cors from 'cors';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 
 const ORDER_PRICING = {
   channel: 1.8,
@@ -20,6 +23,12 @@ const REFERRAL_PERCENTAGE = 0.1;
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const staticDir = path.resolve(__dirname, '../dist');
+const staticIndexPath = path.join(staticDir, 'index.html');
+const hasStaticBundle = fs.existsSync(staticIndexPath);
 
 const databaseUrl =
   process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL || process.env.VITE_DATABASE_URL;
@@ -557,6 +566,20 @@ app.get('/api/activity/:userId', async (req, res, next) => {
     next(error);
   }
 });
+
+if (hasStaticBundle) {
+  app.use(express.static(staticDir));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) {
+      next();
+      return;
+    }
+
+    return res.sendFile(staticIndexPath);
+  });
+} else if (process.env.NODE_ENV === 'production') {
+  console.warn(`[server] Статическая сборка не найдена. Ожидался файл: ${staticIndexPath}`);
+}
 
 app.use((error, _req, res, _next) => {
   console.error('[server] error:', error);
