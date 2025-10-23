@@ -521,8 +521,9 @@ app.post('/api/activity', async (req, res, next) => {
     const payload = activitySchema.parse(req.body);
     const { userId, event } = payload;
     await pool.query(
-      'INSERT INTO activity_log (id, user_id, type, amount, description, created_at) VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (id) DO NOTHING',
+      `INSERT INTO activity_log (id, user_id, type, amount, description, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO NOTHING`,
       [event.id, userId, event.type, event.amount, event.description, event.createdAt]
     );
     res.status(204).end();
