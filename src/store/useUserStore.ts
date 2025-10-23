@@ -46,7 +46,7 @@ interface UserStore {
   pendingTelegramUser: TelegramWebAppUser | null;
   pendingProfileKey: string | null;
   initialize: (telegramUser?: TelegramWebAppUser | null) => void;
-  registerWithPassword: (payload: { password: string }) => Promise<void>;
+  registerWithPassword: (payload: { password: string; username?: string; fullName?: string }) => Promise<void>;
   loginWithPassword: (payload: { password: string }) => Promise<void>;
   logout: () => void;
   adjustBalance: (amount: number) => void;
@@ -57,6 +57,8 @@ interface UserStore {
   setReferrer: (fullName: string) => void;
   incrementReferrals: () => void;
 }
+
+export const MANUAL_PROFILE_KEY = 'manual-profile';
 
 const buildTelegramProfileKey = (telegramId: number) => `telegram-${telegramId}`;
 
@@ -184,42 +186,103 @@ export const useUserStore = create<UserStore>()(
             activeProfileKey: null,
             isInitialized: true,
             needsProfileSetup: true,
-            authMode: effectiveTelegramUser.username ? 'register' : null,
+            authMode: 'register',
             pendingTelegramUser: effectiveTelegramUser,
-            pendingProfileKey: effectiveTelegramUser.username ? profileKey : null
+            pendingProfileKey: profileKey
           });
           return;
         }
+
+        const manualProfile = profiles[MANUAL_PROFILE_KEY];
 
         set({
           user: null,
           activeProfileKey: null,
           isInitialized: true,
           needsProfileSetup: true,
-          authMode: manualTelegramUser?.username ? 'register' : null,
-          pendingTelegramUser: manualTelegramUser,
-          pendingProfileKey: manualTelegramUser?.username ? buildTelegramProfileKey(manualTelegramUser.id) : null
+          authMode: manualProfile ? 'login' : 'register',
+          pendingTelegramUser: null,
+          pendingProfileKey: MANUAL_PROFILE_KEY
         });
       },
-      registerWithPassword: async ({ password }) => {
+      registerWithPassword: async ({ password, username, fullName }) => {
         const { pendingProfileKey, pendingTelegramUser } = get();
 
-        if (!pendingProfileKey || !pendingTelegramUser) {
+        if (!pendingProfileKey) {
           throw new Error('Регистрация недоступна. Перезапустите приложение.');
-        }
-
-        const telegramUsernameRaw = sanitizeUsername(pendingTelegramUser.username);
-        if (!telegramUsernameRaw) {
-          throw new Error('У вашего Telegram аккаунта отсутствует имя пользователя.');
         }
 
         if (!password || password.length < 6) {
           throw new Error('Пароль должен содержать не менее 6 символов.');
         }
 
+        if (pendingTelegramUser) {
+          const telegramUsernameRaw = sanitizeUsername(pendingTelegramUser.username);
+          if (!telegramUsernameRaw) {
+            throw new Error('У вашего Telegram аккаунта отсутствует имя пользователя.');
+          }
+
+          const passwordHash = await hashPassword(password);
+          const referralCode = crypto.randomUUID().split('-')[0];
+          const baseFirstName = firstNameFromTelegram(pendingTelegramUser) ?? 'Boost';
+
+          const newUser: UserProfile = {
+            id: crypto.randomUUID(),
+            balance: INITIAL_BALANCE,
+            lifetimeEarned: 0,
+            lifetimeSpent: 0,
+            ordersPlaced: 0,
+            tasksCompleted: 0,
+            totalTopUps: 0,
+            totalTopUpAmount: 0,
+            referralsCount: 0,
+            referralEarnings: 0,
+            referralCode,
+            createdAt: new Date().toISOString(),
+            firstName: baseFirstName,
+            lastName: pendingTelegramUser.last_name ?? undefined,
+            fullName: fullNameFromTelegram(pendingTelegramUser) || baseFirstName,
+            username: telegramUsernameRaw,
+            telegramId: pendingTelegramUser.id,
+            avatarUrl:
+              pendingTelegramUser.photo_url ??
+              buildAvatarUrl(pendingTelegramUser.username ?? pendingTelegramUser.first_name ?? 'boost-user'),
+            passwordHash,
+            referrer: undefined
+          };
+
+          useBalanceStore.getState().setActiveUser(newUser.id);
+
+          set(state => ({
+            user: newUser,
+            profiles: {
+              ...state.profiles,
+              [pendingProfileKey]: newUser
+            },
+            activeProfileKey: pendingProfileKey,
+            isInitialized: true,
+            needsProfileSetup: false,
+            authMode: null,
+            pendingTelegramUser: null,
+            pendingProfileKey: null
+          }));
+
+          useBalanceStore.getState().logEvent(newUser.id, {
+            type: 'topup',
+            amount: INITIAL_BALANCE,
+            description: 'Начислен стартовый баланс'
+          });
+          return;
+        }
+
+        const normalizedUsername = sanitizeUsername(username);
+        if (!normalizedUsername) {
+          throw new Error('Укажите имя пользователя.');
+        }
+
         const passwordHash = await hashPassword(password);
         const referralCode = crypto.randomUUID().split('-')[0];
-        const baseFirstName = firstNameFromTelegram(pendingTelegramUser) ?? 'Boost';
+        const safeFullName = fullName?.trim() || normalizedUsername;
 
         const newUser: UserProfile = {
           id: crypto.randomUUID(),
@@ -234,14 +297,12 @@ export const useUserStore = create<UserStore>()(
           referralEarnings: 0,
           referralCode,
           createdAt: new Date().toISOString(),
-          firstName: baseFirstName,
-          lastName: pendingTelegramUser.last_name ?? undefined,
-          fullName: fullNameFromTelegram(pendingTelegramUser) || baseFirstName,
-          username: telegramUsernameRaw,
-          telegramId: pendingTelegramUser.id,
-          avatarUrl:
-            pendingTelegramUser.photo_url ??
-            buildAvatarUrl(pendingTelegramUser.username ?? pendingTelegramUser.first_name ?? 'boost-user'),
+          firstName: safeFullName.split(' ')[0] || normalizedUsername,
+          lastName: undefined,
+          fullName: safeFullName,
+          username: normalizedUsername,
+          telegramId: undefined,
+          avatarUrl: buildAvatarUrl(normalizedUsername),
           passwordHash,
           referrer: undefined
         };
@@ -307,7 +368,8 @@ export const useUserStore = create<UserStore>()(
         }));
       },
       logout: () => {
-        const currentUser = get().user;
+        const state = get();
+        const currentUser = state.user;
         useBalanceStore.getState().setActiveUser(null);
 
         if (currentUser?.telegramId) {
@@ -324,14 +386,16 @@ export const useUserStore = create<UserStore>()(
           return;
         }
 
+        const manualProfile = state.profiles[MANUAL_PROFILE_KEY];
+
         set({
           user: null,
           activeProfileKey: null,
           isInitialized: true,
           needsProfileSetup: true,
-          authMode: null,
+          authMode: manualProfile ? 'login' : 'register',
           pendingTelegramUser: null,
-          pendingProfileKey: null
+          pendingProfileKey: MANUAL_PROFILE_KEY
         });
       },
       adjustBalance: amount =>
