@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 import type { BalanceEvent, BalanceEventType } from '../types/models';
-import { fetchActivityHistory } from '../utils/api';
+import { fetchActivityHistory, persistActivityEvent } from '../utils/api';
 
 interface BalanceStore {
   history: BalanceEvent[];
@@ -12,8 +12,6 @@ interface BalanceStore {
   logEvent: (userId: string, event: Omit<BalanceEvent, 'id' | 'createdAt'> & { createdAt?: string }) => void;
   getSummaryByType: (userId: string, type: BalanceEventType) => number;
 }
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 const clampHistory = (events: BalanceEvent[]) => events.slice(0, 100);
 
@@ -72,11 +70,7 @@ export const useBalanceStore = create<BalanceStore>((set, get) => ({
       };
     });
 
-    void fetch(`${API_BASE}/activity`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId, event: entry })
-    }).catch(error => {
+    void persistActivityEvent(userId, entry).catch(error => {
       console.error('[balance] Failed to persist activity', error);
     });
   },

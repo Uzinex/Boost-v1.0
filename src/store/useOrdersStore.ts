@@ -1,13 +1,11 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
 
 import { ORDER_PRICING } from '../utils/constants';
-import type { CreateOrderPayload, Order, UserProfile } from '../types/models';
+import type { CreateOrderPayload, Order } from '../types/models';
 import { useUserStore } from './useUserStore';
 import { useToastStore } from './useToastStore';
 import { useBalanceStore } from './useBalanceStore';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
+import { createOrder as createOrderRequest, fetchOrders as fetchOrdersRequest } from '../utils/api';
 
 interface OrdersStore {
   orders: Order[];
@@ -30,12 +28,7 @@ export const useOrdersStore = create<OrdersStore>((set, get) => ({
 
     set({ isLoading: true });
     try {
-      const response = await fetch(`${API_BASE}/orders`);
-      if (!response.ok) {
-        throw new Error('Не удалось загрузить заказы');
-      }
-
-      const payload = (await response.json()) as { orders: Order[] };
+      const payload = await fetchOrdersRequest();
       set({ orders: payload.orders, isLoading: false, hasLoaded: true });
     } catch (error) {
       console.error('[orders] Failed to load orders', error);
@@ -57,27 +50,13 @@ export const useOrdersStore = create<OrdersStore>((set, get) => ({
       throw new Error('Недостаточно средств на балансе');
     }
 
-    const response = await fetch(`${API_BASE}/orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        payload: {
-          ...payload,
-          requestedCount,
-          totalBudget
-        },
-        userId: user.id
-      })
+    const data = await createOrderRequest({
+      userId: user.id,
+      payload: {
+        ...payload,
+        requestedCount
+      }
     });
-
-    if (!response.ok) {
-      const { error } = (await response.json().catch(() => ({ error: 'Не удалось создать заказ' }))) as {
-        error?: string;
-      };
-      throw new Error(error ?? 'Не удалось создать заказ');
-    }
-
-    const data = (await response.json()) as { order: Order; user: UserProfile };
 
     set(state => ({
       orders: [data.order, ...state.orders],

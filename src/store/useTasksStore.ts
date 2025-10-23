@@ -4,7 +4,8 @@ import { useOrdersStore } from './useOrdersStore';
 import { useToastStore } from './useToastStore';
 import { useUserStore } from './useUserStore';
 import { useBalanceStore } from './useBalanceStore';
-import type { Order, UserProfile } from '../types/models';
+import { completeOrder, fetchTaskCompletions } from '../utils/api';
+import type { Order } from '../types/models';
 
 interface TasksStore {
   completedByUser: Record<string, Record<string, string>>;
@@ -12,8 +13,6 @@ interface TasksStore {
   completeTask: (orderId: string) => Promise<void>;
   hasCompleted: (orderId: string) => boolean;
 }
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 export const useTasksStore = create<TasksStore>((set, get) => ({
   completedByUser: {},
@@ -23,14 +22,7 @@ export const useTasksStore = create<TasksStore>((set, get) => ({
     }
 
     try {
-      const response = await fetch(`${API_BASE}/task-completions/${userId}`);
-      if (!response.ok) {
-        throw new Error('Не удалось загрузить выполненные задания');
-      }
-
-      const payload = (await response.json()) as {
-        completions: Array<{ orderId: string; completedAt: string }>;
-      };
+      const payload = await fetchTaskCompletions(userId);
 
       const entries = payload.completions.reduce<Record<string, string>>((acc, item) => {
         acc[item.orderId] = item.completedAt;
@@ -73,29 +65,10 @@ export const useTasksStore = create<TasksStore>((set, get) => ({
       throw new Error('Вы уже выполнили это задание');
     }
 
-    const response = await fetch(`${API_BASE}/orders/${orderId}/complete`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId: currentUser.id,
-        telegramId: currentUser.telegramId
-      })
+    const payload = await completeOrder(orderId, {
+      userId: currentUser.id,
+      telegramId: currentUser.telegramId
     });
-
-    if (!response.ok) {
-      const { error } = (await response.json().catch(() => ({ error: 'Не удалось завершить задание' }))) as {
-        error?: string;
-      };
-      throw new Error(error ?? 'Не удалось завершить задание');
-    }
-
-    const payload = (await response.json()) as {
-      order: Order;
-      user: UserProfile;
-      reward: number;
-      referralCommission: number;
-      completedAt: string;
-    };
 
     applyOrderUpdate(payload.order);
     useUserStore.getState().setUserFromServer(payload.user);
