@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { useOrdersStore } from '../store/useOrdersStore';
@@ -14,6 +16,8 @@ const TasksPage = () => {
   const completeTask = useTasksStore(state => state.completeTask);
   const pushToast = useToastStore(state => state.push);
 
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+
   if (!user) {
     return null;
   }
@@ -22,12 +26,15 @@ const TasksPage = () => {
     order => order.status !== 'completed' && order.ownerId !== user.id
   );
 
-  const handleComplete = (orderId: string) => {
+  const handleComplete = async (orderId: string) => {
     try {
-      completeTask(orderId);
+      setPendingOrderId(orderId);
+      await completeTask(orderId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось завершить задание';
       pushToast({ type: 'error', title: 'Ошибка', description: message });
+    } finally {
+      setPendingOrderId(null);
     }
   };
 
@@ -76,10 +83,14 @@ const TasksPage = () => {
                     <Button
                       type="button"
                       onClick={() => handleComplete(order.id)}
-                      disabled={alreadyCompleted}
+                      disabled={alreadyCompleted || pendingOrderId === order.id}
                       title={alreadyCompleted ? 'Вы уже выполнили это задание' : undefined}
                     >
-                      {alreadyCompleted ? 'Задание выполнено' : 'Подтвердить выполнение'}
+                      {alreadyCompleted
+                        ? 'Задание выполнено'
+                        : pendingOrderId === order.id
+                          ? 'Проверяем подписку...'
+                          : 'Подтвердить выполнение'}
                     </Button>
                   </div>
                 </Card>

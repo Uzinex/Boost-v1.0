@@ -19,6 +19,7 @@ const OrdersPage = () => {
   const [requestedCount, setRequestedCount] = useState(100);
   const [link, setLink] = useState('');
   const [botAdminConfirmed, setBotAdminConfirmed] = useState(false);
+  const [isSubmitting, setSubmitting] = useState(false);
 
   const myOrders = useMemo(() => (user ? orders.filter(order => order.ownerId === user.id) : []), [orders, user]);
   const completedOrders = myOrders.filter(order => order.status === 'completed');
@@ -30,7 +31,7 @@ const OrdersPage = () => {
   const canAfford = remainingBalance >= totalCost;
   const isFormValid = canAfford && requestedCount >= 10 && link.includes('t.me') && botAdminConfirmed;
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!user) {
       return;
@@ -51,12 +52,15 @@ const OrdersPage = () => {
     }
 
     try {
-      createOrder({ type, requestedCount, link: link.trim(), botIsAdmin: botAdminConfirmed });
+      setSubmitting(true);
+      await createOrder({ type, requestedCount, link: link.trim() });
       setLink('');
       setBotAdminConfirmed(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Не удалось создать заказ';
       pushToast({ type: 'error', title: 'Ошибка', description: message });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -139,7 +143,7 @@ const OrdersPage = () => {
             </div>
           </div>
 
-          <Button type="submit" disabled={!isFormValid}>
+          <Button type="submit" disabled={!isFormValid || isSubmitting}>
             Создать заказ и списать {formatUZT(totalCost, 1)}
           </Button>
         </form>
