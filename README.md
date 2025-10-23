@@ -49,7 +49,7 @@ npm run build
 ## Настройка Telegram-бота
 
 - Токен бота: `7979386374:AAFL518XuLD6VxdCtVWEFalK1E4gFqIM0TU`
-- Railway PostgreSQL: `postgresql://postgres:AVVGLfggenQbKLebMqxMoWAOMXtzmOEv@centerbeam.proxy.rlwy.net:18002/railway`
+- Railway PostgreSQL: `postgresql://postgres:mrilGdyTmNhRxkFIVGGWtieECJHrHupd@ballast.proxy.rlwy.net:18292/railway`
 - Railway Redis (опционально): `redis://default:sakaMbZQRSfFKzIgOywgMHiyvflxfjmf@yamabiko.proxy.rlwy.net:40211`
 
 Текущее MVP использует клиентский state-management, но структура модулей (сторы, утилиты и API-заготовки) позволяет заменить mock-данные
