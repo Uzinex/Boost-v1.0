@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
@@ -24,6 +25,7 @@ const databaseUrl =
   process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_URL || process.env.VITE_DATABASE_URL;
 
 if (!databaseUrl) {
+  console.error('[server] Переменная DATABASE_URL не задана.');
   throw new Error('DATABASE_URL не настроен. Укажите строку подключения к Railway PostgreSQL.');
 }
 
@@ -31,6 +33,10 @@ const useSSL = !/localhost|127\.0\.0\.1/.test(databaseUrl);
 const pool = new Pool({
   connectionString: databaseUrl,
   ssl: useSSL ? { rejectUnauthorized: false } : undefined
+});
+
+pool.on('error', error => {
+  console.error('[server] Неожиданная ошибка подключения к PostgreSQL', error);
 });
 
 const telegramToken = process.env.TELEGRAM_BOT_TOKEN || process.env.VITE_TELEGRAM_BOT_TOKEN || '';
@@ -562,9 +568,20 @@ app.use((error, _req, res, _next) => {
   res.status(400).json({ error: error.message || 'Внутренняя ошибка сервера' });
 });
 
-const port = Number(process.env.PORT || 3001);
+const port = Number.parseInt(process.env.PORT ?? '8080', 10);
+
+const verifyDatabaseConnection = async () => {
+  try {
+    await pool.query('SELECT 1');
+    console.log('[server] Подключение к базе данных установлено');
+  } catch (error) {
+    console.error('[server] Ошибка подключения к базе данных', error);
+    throw error;
+  }
+};
 
 const bootstrap = async () => {
+  await verifyDatabaseConnection();
   await ensureSchema();
   if (telegramToken) {
     try {
