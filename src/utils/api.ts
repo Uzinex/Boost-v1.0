@@ -1,4 +1,14 @@
-import type { BalanceEvent, UserProfile } from '../types/models';
+import type {
+  BalanceEvent,
+  CreateOrderPayload,
+  Order,
+  UserProfile
+} from '../types/models';
+
+interface CreateOrderRequest {
+  userId: string;
+  payload: CreateOrderPayload & { requestedCount: number };
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
@@ -59,3 +69,39 @@ export const fetchUserProfile = async (id: string): Promise<UserProfile | null> 
 
 export const fetchActivityHistory = async (userId: string) =>
   request<{ history: BalanceEvent[] }>(`/activity/${userId}`, { method: 'GET' });
+
+export const fetchOrders = async () => request<{ orders: Order[] }>('/orders', { method: 'GET' });
+
+export const createOrder = async (payload: CreateOrderRequest) =>
+  request<{ order: Order; user: UserProfile }>('/orders', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+export const completeOrder = async (
+  orderId: string,
+  body: { userId: string; telegramId?: number }
+) =>
+  request<{
+    order: Order;
+    user: UserProfile;
+    reward: number;
+    referralCommission: number;
+    completedAt: string;
+  }>(`/orders/${orderId}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(body)
+  });
+
+export const fetchTaskCompletions = async (userId: string) =>
+  request<{ completions: Array<{ orderId: string; completedAt: string }> }>(
+    `/task-completions/${userId}`,
+    { method: 'GET' }
+  );
+
+export const persistActivityEvent = async (userId: string, event: BalanceEvent) =>
+  request<void>('/activity', {
+    method: 'POST',
+    body: JSON.stringify({ userId, event }),
+    skipError: true
+  });
